@@ -1,4 +1,4 @@
-# stats: descriptive, inferential, and matrix statistics in AQL.
+# stats: descriptive, inferential, and matrix statistics in boru.
 #
 # Public surface (the Stats namespace exported at the bottom). Every
 # query word accepts EITHER a List of numbers OR a Summary, except the
@@ -52,7 +52,7 @@
 #   Stats.ols x ys              → List   (least-squares coefficients)
 #
 # Failures raise coded errors (catch with `do […] error […]`, read
-# `e get code` / `e get message` in the handler):
+# `e.code` / `e.message` in the handler):
 #
 #   bad_input    empty data, too few points for the statistic, a
 #                quantile out of [0,1], a non-positive sigma, or
@@ -63,7 +63,7 @@
 #
 # Summary is a sealed `class` of running moments (Welford / Pébay), so
 # mean/variance/skewness/kurtosis are computed in one pass and two
-# Summaries merge in O(1). All arithmetic is done in Float — AQL Integer
+# Summaries merge in O(1). All arithmetic is done in Float — boru Integer
 # overflow is a hard error, not a silent wrap, so sums of squares are
 # floated up front.
 #
@@ -76,8 +76,9 @@
 # accessors `MatrixUtil.row`/`col` read their subject from the stack and
 # stay subject-first — that is their native form.)
 #
-# Imported via `import "./stats.aql"`; the importing script need not
-# pre-import the `aql:*` utilities (math-util, array-util, matrix-util,
+# Imported via `import "./stats.aql"` (a relative import resolves against
+# the IMPORTING file's own directory); the importing script need not
+# pre-import the `boru:*` utilities (math-util, array-util, matrix-util,
 # struct-util) — this module imports them itself.
 
 
@@ -426,14 +427,24 @@ def stat-mode fn [
       def msg `Stats.mode: empty data`
       raise bad_input msg
     ] []
-    def seed (do {best: [fs get 0], best-count: [1], cur: [fs get 0], cur-count: [0]})
+    # Map values auto-evaluate, so the state maps are plain literals with
+    # parenthesised computed values. (The older `do {k: [expr]}` spelling
+    # also works for a value, but inside this fold body it trips a boru
+    # runtime defect: after `def st1 (do {cur: [v]})` in an `each`/`fold`
+    # var body inside a fn, the var-bound `v` reads `undefined word: v` —
+    # works around that defect; the plain-literal form is the idiomatic
+    # spelling anyway.)
+    def seed {best: (fs get 0), best-count: 1, cur: (fs get 0), cur-count: 0}
     def acc (seed fs [var [[v st]
       def same (v eq (st.cur))
       def cc (if same [(st.cur-count) add 1] [1])
-      def st1 (do {best: [st.best], best-count: [st.best-count], cur: [v], cur-count: [cc]})
-      if (cc gt (st1.best-count)) [
-        do {best: [v], best-count: [cc], cur: [v], cur-count: [cc]}
-      ] [st1]
+      def st1 {best: (st.best), best-count: (st.best-count), cur: v, cur-count: cc}
+      # Both candidate states are bound before the `if` and the arms only
+      # name them — works around boru compile defect: "a branch arm leaves
+      # a list or map literal the interpreter keeps pending past the `if`
+      # (NUR356)" — remove when fixed upstream.
+      def won {best: v, best-count: cc, cur: v, cur-count: cc}
+      if (cc gt (st1.best-count)) [won] [st1]
     ]] fold)
     acc.best
   ]
@@ -517,7 +528,12 @@ def stat-linreg fn [
     def slope (sxy div sxx)
     def intercept (my sub (slope mul mx))
     def r (if (syy gt 0.0) [sxy div (MathUtil.sqrt (sxx mul syy))] [0.0])
-    do {slope: [slope], intercept: [intercept], r: [r], r2: [r mul r]}
+    # A plain map literal (values auto-evaluate). Not `do {k: [expr]}`:
+    # works around a boru runtime defect where a fn-local def read inside
+    # a `do {…}` map leaves that name unresolvable as a var-bound name in a
+    # LATER fn's `each`/`fold` body (this word's `r` broke solve-linear's
+    # pivot fold `[var [[r best] …]]`: `undefined word: r`).
+    {slope: slope, intercept: intercept, r: r, r2: (r mul r)}
   ]
 ]
 
@@ -759,15 +775,15 @@ def stat-ols fn [
 
 def stat-encode fn [
   [s:Summary] [String] [
-    def payload (do {
-      n:    [s.n]
-      mean: [s.mean]
-      m2:   [s.m2]
-      m3:   [s.m3]
-      m4:   [s.m4]
-      min:  [s.min]
-      max:  [s.max]
-    })
+    def payload {
+      n:    (s.n)
+      mean: (s.mean)
+      m2:   (s.m2)
+      m3:   (s.m3)
+      m4:   (s.m4)
+      min:  (s.min)
+      max:  (s.max)
+    }
     `${payload}`
   ]
 ]
@@ -802,51 +818,51 @@ def stat-decode fn [
 
 # --- namespace ------------------------------------------------------
 #
-# Functions are exported with `/r` so the auto-evaluating map literal
-# doesn't dispatch them at construction time. The Summary type goes in
-# bare.
+# Functions are exported with `/v` (the binding's VALUE, not a call) so
+# the auto-evaluating map literal doesn't dispatch them at construction
+# time. The Summary type goes in bare.
 
 export "Stats" {
   Summary
-  summary:      build-summary/r
-  push:         stat-push/r
-  push-all:     stat-push-all/r
-  merge:        stat-merge/r
-  encode:       stat-encode/r
-  decode:       stat-decode/r
+  summary:      build-summary/v
+  push:         stat-push/v
+  push-all:     stat-push-all/v
+  merge:        stat-merge/v
+  encode:       stat-encode/v
+  decode:       stat-decode/v
 
-  count:        stat-count/r
-  sum:          stat-sum/r
-  mean:         stat-mean/r
-  variance:     stat-variance/r
-  pvariance:    stat-pvariance/r
-  stddev:       stat-stddev/r
-  pstddev:      stat-pstddev/r
-  min:          stat-min/r
-  max:          stat-max/r
-  range:        stat-range/r
-  skewness:     stat-skewness/r
-  kurtosis:     stat-kurtosis/r
+  count:        stat-count/v
+  sum:          stat-sum/v
+  mean:         stat-mean/v
+  variance:     stat-variance/v
+  pvariance:    stat-pvariance/v
+  stddev:       stat-stddev/v
+  pstddev:      stat-pstddev/v
+  min:          stat-min/v
+  max:          stat-max/v
+  range:        stat-range/v
+  skewness:     stat-skewness/v
+  kurtosis:     stat-kurtosis/v
 
-  median:       stat-median/r
-  quantile:     stat-quantile/r
-  iqr:          stat-iqr/r
-  mode:         stat-mode/r
+  median:       stat-median/v
+  quantile:     stat-quantile/v
+  iqr:          stat-iqr/v
+  mode:         stat-mode/v
 
-  covariance:   stat-covariance/r
-  pcovariance:  stat-pcovariance/r
-  correlation:  stat-correlation/r
-  linreg:       stat-linreg/r
+  covariance:   stat-covariance/v
+  pcovariance:  stat-pcovariance/v
+  correlation:  stat-correlation/v
+  linreg:       stat-linreg/v
 
-  zscores:      stat-zscores/r
-  normal-pdf:   stat-normal-pdf/r
-  normal-cdf:   stat-normal-cdf/r
+  zscores:      stat-zscores/v
+  normal-pdf:   stat-normal-pdf/v
+  normal-cdf:   stat-normal-cdf/v
 
-  col-means:    stat-col-means/r
-  col-variances: stat-col-variances/r
-  col-stddevs:  stat-col-stddevs/r
-  cov-matrix:   stat-cov-matrix/r
-  cor-matrix:   stat-cor-matrix/r
-  standardize:  stat-standardize/r
-  ols:          stat-ols/r
+  col-means:    stat-col-means/v
+  col-variances: stat-col-variances/v
+  col-stddevs:  stat-col-stddevs/v
+  cov-matrix:   stat-cov-matrix/v
+  cor-matrix:   stat-cor-matrix/v
+  standardize:  stat-standardize/v
+  ols:          stat-ols/v
 }

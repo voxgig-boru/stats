@@ -17,10 +17,16 @@
 #   aql test/stats_prop_test.aql
 
 
+# The library under test is imported FIRST, before `boru:test`: works
+# around a boru runtime defect (a type-ID collision between boru:test's
+# record types and a user module's `class` when boru:test is imported
+# first — every Summary-returning word then raised `type_error: …
+# expected Summary, got Summary`). Remove the ordering constraint when
+# fixed upstream; see dx-report.md "Migration to boru main @ 64c5ab2".
+import "../stats.aql" end
 import "boru:test" end
 import "boru:math-util" end
 import "boru:array-util" end
-import "./stats.aql" end
 
 
 # |a - b| < 1e-6.
@@ -44,7 +50,7 @@ Test.check-prop "sample-var-ge-pop-var"
       (pv gte 0.0) and (sv gte pv)
   ]]
   40 1 0
-end
+end drop   # check-prop returns its PropertyResult map; Test.results reads them all below
 
 
 # --- P2. merge is consistent with pooling --------------------------
@@ -67,7 +73,7 @@ Test.check-prop "merge-pools-correctly"
         and ((Stats.mean merged end) close (Stats.mean pooled end))
   ]]
   30 1 0
-end
+end drop   # check-prop returns its PropertyResult map; Test.results reads them all below
 
 
 # --- P3. correlation of a variable with itself is 1 ----------------
@@ -84,7 +90,7 @@ Test.check-prop "self-correlation-is-one"
       ] [true]
   ]]
   40 1 0
-end
+end drop   # check-prop returns its PropertyResult map; Test.results reads them all below
 
 
 # --- P4. z-scores are centered at zero -----------------------------
@@ -98,7 +104,7 @@ Test.check-prop "zscores-mean-zero"
       ] [true]
   ]]
   40 1 0
-end
+end drop   # check-prop returns its PropertyResult map; Test.results reads them all below
 
 
 # --- P5. encode / decode preserves count and mean ------------------
@@ -112,13 +118,13 @@ Test.check-prop "encode-decode-round-trips"
         and ((Stats.mean s end) close (Stats.mean back end))
   ]]
   30 1 0
-end
+end drop   # check-prop returns its PropertyResult map; Test.results reads them all below
 
 
 # --- summary -------------------------------------------------------
 
-"---" print end
-"results:" print end
+print ("---")
+print ("results:")
 def _print-results ((Test.results end) each [
   var [[r]
     def nm (r "name" get)
@@ -127,7 +133,7 @@ def _print-results ((Test.results end) each [
     0
   ]
 ])
-"---" print end
-"fail count: " print end (Test.fail-count end) print end
-0 (Test.fail-count end) Assert.equal end
-"all green" print end
+print ("---")
+print (`fail count: ${(Test.fail-count)}`)
+Assert.equal 0 (Test.fail-count)
+print ("all green")

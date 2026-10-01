@@ -12,10 +12,16 @@
 #   aql test/stats_unit_test.aql
 
 
+# The library under test is imported FIRST, before `boru:test`: works
+# around a boru runtime defect (a type-ID collision between boru:test's
+# record types and a user module's `class` when boru:test is imported
+# first — every Summary-returning word then raised `type_error: …
+# expected Summary, got Summary`). Remove the ordering constraint when
+# fixed upstream; see dx-report.md "Migration to boru main @ 64c5ab2".
+import "../stats.aql" end
 import "boru:test" end
 import "boru:math-util" end
 import "boru:matrix-util" end
-import "./stats.aql" end
 
 
 # Float tolerance: |a - b| < 1e-9. `a` is the actual value, `b` expected.
@@ -212,7 +218,10 @@ def near fn [
 
 # --- summary -------------------------------------------------------
 
-"---" print
-"fail count: " print Test.fail-count end print
-0 Test.fail-count end Assert.equal end
-"all green" print
+# One `print (value)` per statement: `print` collects a FORWARD argument
+# and a line break is not a barrier, so the older `"---" print` /
+# `"x" print` chain printed out of order on boru main.
+print ("---")
+print (`fail count: ${(Test.fail-count)}`)
+Assert.equal 0 (Test.fail-count)
+print ("all green")
