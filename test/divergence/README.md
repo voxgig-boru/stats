@@ -1,75 +1,80 @@
-# Three-way test check: interpreter · check · byte compiler
+# Multi-surface test gate: compiled run · check
 
-This library's `.aql` suites are written once and must mean the same thing
-no matter how `boru` runs them. `run.sh` runs every suite through all three
-execution surfaces and asserts none errors or disagrees:
+This library's `.aql` suites are written once and must run clean on boru
+main. `run.sh` runs every suite through both execution surfaces boru main
+has, and checks the library module statically:
 
 ```bash
-boru X            # interpreter — the default; what CI and users run
+boru X            # compile to bytecode and run on the VM — the ONLY run path;
+                  #   must exit 0 (and print `all green` where the suite asserts)
 boru check X      # static type-check — must report 0 errors
-boru --compile X  # byte compiler — bytecode when compilable, else a SILENT
-                 #   fallback to the interpreter; documented to be IDENTICAL
-                 #   to it ("opt-in performance, never semantics")
 ```
 
-It also prints an `boru --force-compile X` coverage line per suite — how much
-of each program the bytecode emitter can fully lower today. Refusals there
-are expected gaps (under `--compile` they fall back to the interpreter), not
-failures.
+## Why there is no interpreter / `--compile` column any more
+
+Until 2026-09 boru had two engines — a tree-walking interpreter and a
+bytecode compiler that silently fell back to it — and this harness compared
+them (`boru --no-compile X` against `boru --compile X`, plus a
+`--force-compile` coverage line). **Since boru main 2026-09-19 there is one
+execution path**: a program compiles to bytecode and runs on the VM, or it
+fails loudly with `[boru/compile_failed] … this is a compiler defect`. There
+is no interpreter fallback, and `--compile`, `--force-compile`,
+`--no-compile` and the `BORU_COMPILE` / `BORU_FORCE_COMPILE` /
+`BORU_NO_COMPILE` env vars are **retired** (passing one is a usage error). So
+"the suite runs" now *means* "the suite fully compiles", and those columns
+were dropped — there is nothing left to diverge from.
+
+`boru X` also runs the static pre-flight check by default (a check error
+blocks the run). The harness never passes `-no-check`.
 
 ## Running it
 
 ```bash
-test/divergence/run.sh
+test/divergence/run.sh                          # builds boru @ main HEAD (cached)
+BORU=~/.local/bin/boru test/divergence/run.sh   # use an existing binary
+BORU_REF=<sha> test/divergence/run.sh           # build a specific boru commit
 ```
 
-`run.sh` builds its own boru at a ref pinned in the script (the same
-`12a44e0` the library pins; pinning it here keeps the harness
-self-contained, so it never depends on whatever boru is on `PATH`), then
-prints a per-suite matrix:
+Without `BORU`, `run.sh` builds its own boru at boru-lang/boru **main HEAD**
+(resolved at run time, cached by SHA in `~/.cache/boru-divergence`), so it
+never depends on whatever boru is on `PATH`. It fetches the source as a
+codeload tarball (curl), so it builds even where raw `git clone` of
+boru-lang/boru is blocked, and builds the CLI from `cmd/go` (`./boru`);
+needs `go` + network for the one-time build. Output:
 
 ```
-  SUITE                         INTERPRETER   CHECK           BYTECODE
-  stats_unit_test.aql           ok            ok              ok
-  stats_unit_spec.aql           ok            ok              ok
-  stats_prop_test.aql           ok            ok              ok
-  stats_prop_spec.aql           ok            ok              ok
-  stats_smoke_test.aql          ok            ok              ok
+  MODULE                        CHECK
+  stats.aql                     ok
+
+  SUITE                         RUN                     CHECK
+  stats_unit_test.aql           ok                      ok
+  stats_unit_spec.aql           ok                      ok
+  stats_prop_test.aql           ok                      ok
+  stats_prop_spec.aql           ok                      ok
+  stats_smoke_test.aql          ok                      ok
 ```
 
-It exits non-zero on any interpreter failure, any check **error**, or any
-difference between `boru --compile X` and `boru X`. It fetches the boru source
-as a codeload tarball (curl), so it builds even where raw `git clone` of
-boru-lang/boru is blocked; needs `go` + network for the one-time build (cached
-in `~/.cache/aql-divergence`).
+A `RUN` cell reads `COMPILE_FAILED` when boru refused to compile the suite
+(an upstream compiler defect), `FAIL(exit N)` for any other non-zero exit,
+and `FAIL(no all green)` when an assertion-bearing suite exited 0 without
+printing `all green`. The script exits non-zero on any of those or on any
+check **error** (warnings and infos are reported by `boru check` but do not
+gate).
 
 ## Background: what this guards against
 
-`boru --compile` is documented to return results identical to the interpreter
-(it falls back to the interpreter for anything it can't lower). This harness
-exists because that promise has been broken before — notably a compiled
-`each` body once dropped a *block-local* binding from its enclosing block,
-and because the emitter believed it could lower the body, `--compile` did
-**not** fall back and a wrong result escaped.
-
-That class of bug matters here: several words in `stats.aql` bind a local
-inside an `each` body and read it there (e.g. `centered-rows` binds `def row
-(mat MatrixUtil.row i)` per row; `cor-matrix` binds `def crow …`). On this
-pin (`12a44e0`) those compile byte-identically to the interpreter, and the
-harness asserts it on every change so a future regression can't slip the
-"identical, never semantics" guarantee past CI.
-
-`--force-compile` fully compiles `stats_prop_test.aql`; the others refuse on
-code-body words (`each` / `test-test`, "Stage 2") or an `fn` operand of
-unknown provenance, and fall back cleanly under `--compile` — sound by
-`boru-lang/boru`'s `design/COMPILABLE-SUBSET.md` ("refusal is always sound;
-the worst failure mode is slow, not wrong").
+The original reason for this harness was a byte-compiler miscompile that
+escaped the "identical to the interpreter" promise (a compiled `each` body
+once dropped a block-local binding). With a single compiled path such a bug
+now shows up as a wrong answer in a suite or as a `compile_failed`, which
+this gate catches directly; the upstream compiler defects hit during the
+migration to boru main @ 64c5ab2 — and the library rewrites that avoid them —
+are listed in [`dx-report.md`](../../dx-report.md#migration-to-boru-main--64c5ab2-2026-10-01).
 
 ### Wiring it into CI
 
-`run.sh` is self-contained, so a gating job is one block (add it to
-`.github/workflows/test.yml` — needs a token with `workflow` scope, which the
-agent session that wrote this didn't have):
+`run.sh` is self-contained; the `divergence` job in
+`.github/workflows/test.yml` already calls it:
 
 ```yaml
   divergence:
@@ -79,6 +84,5 @@ agent session that wrote this didn't have):
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-      - name: interpreter / check / byte-compiler agreement
-        run: test/divergence/run.sh
+      - run: test/divergence/run.sh
 ```
