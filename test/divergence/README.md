@@ -86,3 +86,11 @@ are listed in [`dx-report.md`](../../dx-report.md#migration-to-boru-main--64c5ab
           go-version: '1.24'
       - run: test/divergence/run.sh
 ```
+
+The workflow needed no functional change for boru main: it already builds
+boru at main HEAD from `cmd/go` (`./boru`) and invokes none of the retired
+flags. Its comments and this job's step label ("interpreter / check /
+byte-compiler agreement") still describe the old three-surface comparison
+and a pinned `BORU_REF`; refreshing that text means editing
+`.github/workflows/test.yml`, which needs a token with `workflow` scope, so
+it was left for a maintainer. The behaviour is already correct.
