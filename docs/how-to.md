@@ -6,7 +6,7 @@ the statistic is; if you want a guided first session, start with the
 links into the [Explanation](explanation.md); for exact signatures, the
 [Reference](reference.md).
 
-- [Install and run boru](#install-and-run-aql)
+- [Install and run boru](#install-and-run-boru)
 - [Summarise a List of numbers](#summarise-a-list-of-numbers)
 - [Choose sample vs population](#choose-sample-vs-population)
 - [Order statistics: median, quantile, IQR, mode](#order-statistics-median-quantile-iqr-mode)
@@ -24,40 +24,42 @@ links into the [Explanation](explanation.md); for exact signatures, the
 ## Install and run boru
 
 The module is written in boru, which has no tagged release yet, so build
-the interpreter from source (the documented `go install …/aql@latest`
-fails on the repo's replace directives). The pinned commit is
-`618562025d9e0154107306927911a8b1b046333c` (main):
+the `boru` CLI from source (`go install …@latest` fails on the repo's
+replace directives). This library tracks boru **main**; it is verified
+against boru main @ `64c5ab2` (2026-09-30):
 
 ```bash
-curl -fsSL https://codeload.github.com/boru-lang/boru/tar.gz/618562025d9e0154107306927911a8b1b046333c | tar -xz
-cd aql-618562025d9e0154107306927911a8b1b046333c/cmd/go
-GOFLAGS=-mod=mod go build -o "$HOME/.local/bin/boru" ./boru
+curl -fsSL https://codeload.github.com/boru-lang/boru/tar.gz/main | tar -xz
+cd boru-main/cmd/go
+GOWORK=off GOFLAGS=-mod=mod go build -o "$HOME/.local/bin/boru" ./boru
 ```
 
-Or clone and check the ref out, then build the same `cmd/go` target:
+Or clone it and build the same `cmd/go` target (the CLI's main package is
+`cmd/go/boru`; the binary is `boru` — the old `aql` name is gone):
 
 ```bash
 git clone https://github.com/boru-lang/boru
-git -C boru checkout 618562025d9e0154107306927911a8b1b046333c
-(cd aql/cmd/go && GOFLAGS=-mod=mod go build -o "$HOME/.local/bin/boru" ./boru)
+(cd boru/cmd/go && go build -o "$HOME/.local/bin/boru" ./boru)
 ```
 
 Make sure `$HOME/.local/bin` is on your `PATH`, then check it:
 
 ```bash
-boru -version    # => boru 6185620-main
+boru -version    # => boru 0.1.0-dev (git 64c5ab2f3aed)  — or the ref you built
 ```
 
-Run any script in this repo by passing its path:
+Run any script in this repo by passing its path (from any directory —
+relative imports resolve against the importing file, not the cwd):
 
 ```bash
 boru test/stats_smoke_test.aql
 ```
 
-This module is verified against boru commit `6185620`; `boru:matrix-util`
-and the runtime behaviours this library relies on require this ref or
-newer. In remote Claude Code sessions a SessionStart hook builds it
-automatically.
+`boru X` compiles the program to bytecode and runs it on the VM — the one
+execution path on boru main (the old `--compile` / `--no-compile` /
+`--force-compile` flags are retired) — after a static pre-flight check
+that blocks the run on any check error. In remote Claude Code sessions a
+SessionStart hook builds boru automatically.
 
 ---
 
@@ -167,7 +169,7 @@ import "./stats.aql"
 def s (Stats.summary [1 2 3 4 5] end)
 def snap (Stats.encode s end)
 print (snap) end
-# => {m2:10.0 m3:0.0 m4:34.0 max:5.0 mean:3.0 min:1.0 n:5}
+# => {n:5 mean:3.0 m2:10.0 m3:0.0 m4:34.0 min:1.0 max:5.0}
 def back (Stats.decode snap end)
 print ((Stats.mean back end)) end   # => 3.0
 ```
@@ -191,13 +193,15 @@ def ys [2 4 5 4 5]
 print (`covariance:  ${(Stats.covariance xs ys end)}`) end    # => 1.5
 print (`correlation: ${(Stats.correlation xs ys end)}`) end   # => 0.7745966692414833
 def fit (Stats.linreg xs ys end)
-print (`slope:     ${(fit get slope)}`) end       # => 0.6
-print (`intercept: ${(fit get intercept)}`) end    # => 2.2
-print (`r2:        ${(fit get r2)}`) end            # => 0.6000000000000001
+print (`slope:     ${fit.slope}`) end            # => 0.6
+print (`intercept: ${fit.intercept}`) end        # => 2.2
+print (`r2:        ${fit.r2}`) end               # => 0.6000000000000001
 ```
 
 `linreg` returns a Map with `slope`, `intercept`, `r` (Pearson), and
-`r2`. Mismatched lengths raise `bad_input`; a predictor with zero
+`r2` — read them with dot access (`fit.slope`); `get` evaluates its key,
+so `fit get slope` would look up a word named `slope`. Mismatched lengths
+raise `bad_input`; a predictor with zero
 variance raises `bad_input` (correlation/regression are undefined).
 
 ---
@@ -262,23 +266,24 @@ How OLS solves the normal equations:
 ## Handle errors
 
 Failures raise coded errors. Catch them with `do [...] error [...]`;
-inside the handler the Error value is on the stack, so read `get code` /
-`get message` (dispatch on the code with `case` if you handle several):
+inside the handler the Error value is on the stack, so read `dot code` /
+`dot message` (`dot` quotes the bare field name; `get` would evaluate it
+as a word). Dispatch on the code with `case` if you handle several:
 
 ```boru
 import "./stats.aql"
-def msg (do [Stats.variance [5] end] error [get message])
+def msg (do [Stats.variance [5] end] error [dot message])
 print (msg) end
 # => Stats: need at least 2 value(s) (have 1)
-def code (do [Stats.variance [5] end] error [get code])
+def code (do [Stats.variance [5] end] error [dot code])
 print (code) end                 # => bad_input
 
 # an order statistic on a Summary needs the raw data:
 def s (Stats.summary [1 2 3] end)
-print ((do [Stats.median s end] error [get code])) end   # => needs_data
+print ((do [Stats.median s end] error [dot code])) end   # => needs_data
 
 # unparseable decode payload:
-print ((do [Stats.decode "not a snapshot" end] error [get code])) end
+print ((do [Stats.decode "not a snapshot" end] error [dot code])) end
 # => bad_payload
 ```
 
@@ -291,15 +296,24 @@ The four codes:
 | `singular` | `Stats.ols` normal equations have no unique solution |
 | `bad_payload` | `Stats.decode` text is not a `Stats.encode` snapshot |
 
-In a test, assert the failure (or its exact code) with `boru:test`:
+In a test, assert the failure (or its exact code) with `boru:test`.
+Import the library **before** `boru:test` — importing `boru:test` first
+trips an upstream type-identity defect on boru main @ `64c5ab2` (every
+Summary-returning word raises `expected Summary, got Summary`; see
+`dx-report.md`):
 
 ```boru
-import "boru:test"
 import "./stats.aql"
+import "boru:test"
 [Stats.variance [5] end] Assert.throws end
-def e (do [Stats.variance [5] end])
-bad_input/q (e get code) Assert.equal end
+def code (do [Stats.variance [5] end] error [dot code])
+Assert.equal bad_input/q code
 ```
+
+(At top level, read the code inside the handler as above rather than
+`def e (do [...])` then `e.code`: `boru check` types a handler-less
+`do [...]` as its body's success type, so `e.code` on it is reported as a
+`no_signature` error even though it runs.)
 
 (Why the module raises coded errors:
 [Explanation → Raising errors](explanation.md#raising-errors).)
@@ -322,10 +336,12 @@ def xs [1 2 3 4 5]
 The one exception is when *your* script builds a `Matrix` to hand to the
 dataset words (`col-means`, `cov-matrix`, `ols`, …): add
 `import "boru:matrix-util"` yourself, because the `MatrixUtil` binding is
-not re-exported. (No `end` is needed after `import` on the pinned build;
-the import path resolves relative to the directory you run the script
-from.) Every `Stats.*` call must end with `end` (or be wrapped in
-parens) so the word doesn't swallow the following token.
+not re-exported. (No `end` is needed after `import`; a relative import
+path resolves against the importing file's own directory, so a script in
+`test/` writes `import "../stats.aql"`.) Every `Stats.*` call must end
+with `end` (or be wrapped in parens) so the word doesn't swallow the
+following token. To pass a `Stats` word itself as data (to `each`, say),
+write `Stats.mean/v` — a bare name holding a function **calls**.
 `test/stats_smoke_test.aql` is a complete worked example you can copy
 from.
 
@@ -367,18 +383,16 @@ and prints `all green`, so a failure makes `boru` exit non-zero — which
 is exactly what the [CI workflow](../.github/workflows/test.yml) checks on every push
 and pull request.
 
-One more check sits outside this set. `test/divergence/` runs every
-suite through all three of boru's execution surfaces — the interpreter,
-`boru check` (static type-check), and the byte compiler (`boru --compile`)
-— and asserts none errors or disagrees. Run it with:
+One more check sits outside this set. `test/divergence/run.sh` is the
+multi-surface gate: every suite must exit 0 under `boru X` (compiled —
+the only execution path on boru main) and print `all green`, and
+`boru check` must report 0 errors on every suite and on `stats.aql`. Run
+it with:
 
 ```bash
-test/divergence/run.sh
+test/divergence/run.sh                          # builds boru @ main HEAD (cached)
+BORU=~/.local/bin/boru test/divergence/run.sh   # or reuse an existing binary
 ```
 
-It builds a newer boru (the `--compile` CLI postdates this module's pin)
-and prints a per-suite interpreter/check/bytecode matrix. See
-[`test/divergence/README.md`](../test/divergence/README.md) for the one
-upstream byte-compiler bug this guards against (a compiled `each` body
-drops a *block-local* binding) and the structural choice that keeps the
-suites clear of it.
+See [`test/divergence/README.md`](../test/divergence/README.md) for why the
+old interpreter / `--compile` columns were dropped.

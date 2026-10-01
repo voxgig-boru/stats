@@ -1,12 +1,12 @@
 {
   "name": "voxgig-boru",
   "owner": { "name": "voxgig-boru" },
-  "description": "Plugins for the voxgig AQL ecosystem.",
+  "description": "Plugins for the voxgig boru ecosystem.",
   "plugins": [
     {
       "name": "stats-aql",
       "source": "./plugins/stats-aql",
-      "description": "Agent guidance for using the Stats statistics library from AQL.",
+      "description": "Agent guidance for using the Stats statistics library from boru.",
       "version": "0.1.0",
       "license": "MIT"
     }
