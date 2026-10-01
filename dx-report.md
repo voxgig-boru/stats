@@ -50,11 +50,14 @@ info each, below). `test/divergence/run.sh` enforces exactly that.
 | 9 | Map/record printing is insertion-ordered | doc outputs of `Stats.encode` / `linreg` showed sorted keys | docs updated to the real output (`{n:5 mean:3.0 m2:…}`) |
 | 10 | Float last-ulp: `Stats.correlation [1 2 3 4 5] [2 4 5 4 5]` is `0.7745966692414833` (was `…834`) | doc comments only (tests are tolerance-checked) | docs updated |
 
-No test case, expected value or tolerance was changed. (`Assert.equal`'s
-documented stack order is *actual first, expected second*; these suites
-write the expected value first, so a failure message labels the two the
-other way round. Equality is symmetric, so pass/fail is unaffected; the
-assertions were left as written.)
+No test case, expected value or tolerance was changed. (`Assert.equal x y
+<=> y x Assert.equal`, and its documented stack order is *actual first,
+expected second*. The suite summaries' forward `Assert.equal 0
+(Test.fail-count)` therefore labels correctly — `expected 0, got N`. The
+older stack-form assertions inside `stats_unit_test`'s `Test.test` bodies
+write the expected value first (`3.0 (Stats.mean xs end) Assert.equal`), so
+a failure there labels the two the other way round. Equality is symmetric,
+so pass/fail is unaffected; those assertions were left as written.)
 
 ### Upstream defects worked around (minimal repros)
 
@@ -136,6 +139,36 @@ run), though at run time `do` returns the Error and `e.code` is
 `def e (do [f 0])  print (e.code)`. The unit suite's
 `((do […]).code)` reads sit inside `Test.test` bodies and check clean;
 the docs use the handler form `error [dot code]`. Unrecorded.
+
+**D5 🟢 checker false positive — a raising guard arm is not treated as
+diverging.** A fn whose guard `if` *raises* on a wrong-typed argument and
+otherwise returns the argument is modelled by the check as falling through
+to its tail, so a statically-known wrong argument reports a false
+return-contract `type_error` instead of the `raise`:
+
+```boru
+def need-list fn [[x:Any] [List] [
+  if (x is Map) [
+    def msg `needs a List`
+    raise needs_data msg
+  ] []
+  x
+]]
+print (need-list {v: 1})
+# expected: the run raises [boru/needs_data]: needs a List
+# actual:   check (which blocks the run): [error] type_error: need-list:
+#           return value 1: expected List, got Map
+```
+
+In this library it is `require-list`: a direct top-level `Stats.median s end`
+on a Summary is rejected before the run with `type_error: require-list:
+return value 1: expected List, got Summary` — and, because `require-list`
+lives in the imported module, the caret points at a line number of
+`stats.aql` (192) rendered against the *caller's* file. The program would
+fail anyway (with `needs_data`), so no valid code is blocked; inside
+`do […]` the check downgrades it to info and the run raises `needs_data`
+as documented. Unrecorded. No workaround applied (the guard is correct);
+the docs note the misleading message.
 
 **Info-level check notes (not gating).** `boru check stats.aql` reports
 one `redundant_guard` info in `as-summary` ("guard is always true: x is

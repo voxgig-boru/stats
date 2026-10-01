@@ -108,7 +108,7 @@ Catch errors with `do […] error […]`; in the handler read `dot code`
 (or `e.code` on a bound error — `get` evaluates its key, so a bare
 `get code` is `undefined word: code`). Codes:
 `bad_input` (empty/too-few data, q out of range, sigma ≤ 0, length
-mismatch), `needs_data` (order statistic called on a Summary),
+mismatch), `needs_data` (order statistic or `zscores` called on a Summary),
 `singular` (OLS has no unique solution), `bad_payload` (bad decode).
 
 ## Idioms (verified)
@@ -151,12 +151,12 @@ def cov (Stats.cov-matrix mat end)             # => Matrix(2x2)
 |---------|------|-----|
 | `Stats.mean(xs)` / `xs.mean()` | `Stats.mean xs end` | boru has no call/method syntax. |
 | `Stats.mean xs` mid-expression, no terminator | `Stats.mean xs end` | The verb swallows the next token. |
-| `Stats.push s x` / `Stats.merge a b` (receiver first) | `Stats.push x s` / `Stats.merge b a` (receiver **last**), or pipe `s Stats.push x` | Receiver-last convention: the `Summary` is the last arg. Receiver-first-all-forward silently swaps value & accumulator — no error, wrong moments. |
-| `Stats.median s end` on a Summary | pass the raw **List** | Order statistics need the data; a Summary raises `needs_data`. |
+| `Stats.push s x` / `Stats.merge a b` (receiver first) | `Stats.push x s` / `Stats.merge b a` (receiver **last**), or pipe `s Stats.push x` | Receiver-last convention: the `Summary` is the last arg. Receiver-first `push`/`push-all` is rejected by the pre-flight check (`uncalled_function`); receiver-first `merge` (two Summaries) binds **silently** and folds `a` into `b`. |
+| `Stats.median s end` on a Summary | pass the raw **List** | Order statistics need the data; a Summary raises `needs_data` (inside `do […]`; written directly, the pre-flight check rejects it with a misleading `require-list: return value 1` type_error — an upstream checker false positive). |
 | treat `Stats.variance` as population | `Stats.pvariance` for population | Bare `variance`/`stddev` are **sample** (n-1). |
 | keep a pre-`push` copy of a Summary | none — `push`/`merge` mutate in place | The argument and the return value are the same object. |
 | `e get code` / `lr get slope` | `e.code` / `lr.slope` / `dot code` in a handler | `get` evaluates its key; a bare field name is an `undefined word`. |
-| `xss each Stats.mean` (a Stats word passed as data) | `xss each Stats.mean/v` | A bare name holding a function **calls**; `/v` passes the value. |
+| `[Stats.mean Stats.median]` / `myfn Stats.mean xs` (a Stats word passed as data) | `[Stats.mean/v Stats.median/v]` / `myfn Stats.mean/v xs` | A bare name holding a function **calls** (`uncalled_function` / `no_signature` at check); `/v` passes the value. (`xs each Stats.mean` happens to work — `each` takes a bare word as its body — but `/v` is always safe.) |
 | `import "boru:test"` before `./stats.aql` | import `./stats.aql` first | Upstream defect on boru main @ `64c5ab2`: `expected Summary, got Summary`. |
 | build a Matrix without importing matrix-util | `import "boru:matrix-util"` in your script | The library's deps are not re-exported to callers. |
 | `"label" print (v) print` | `print (v)`, one per statement | `print` collects forward (a line break is not a barrier); chains print out of order. |
@@ -165,7 +165,8 @@ def cov (Stats.cov-matrix mat end)             # => Matrix(2x2)
 
 - **Receiver-last binds two ways.** `Stats.push value s` (forward) and
   `s Stats.push value` (piping) are identical; only receiver-first
-  (`Stats.push s value`) misbinds. Same for `push-all` and `merge`.
+  (`Stats.push s value`) misbinds — loudly for `push`/`push-all` (the
+  pre-flight check rejects it), silently for `merge` (two Summaries).
 - **Order statistics need a List, never a Summary.**
   `median`/`quantile`/`iqr`/`mode` raise `needs_data` on a `Summary` —
   the raw data is gone once it's folded into running moments. Keep (or

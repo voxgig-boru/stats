@@ -292,7 +292,7 @@ The four codes:
 | Code | When |
 |------|------|
 | `bad_input` | empty/too-few data, `quantile` `q` outside `[0,1]`, non-positive sigma, mismatched vector lengths, zero-variance predictor |
-| `needs_data` | an order-statistic / bivariate word called on a Summary |
+| `needs_data` | an order-statistic word (`median`/`quantile`/`iqr`/`mode`) or `zscores` called on a Summary |
 | `singular` | `Stats.ols` normal equations have no unique solution |
 | `bad_payload` | `Stats.decode` text is not a `Stats.encode` snapshot |
 

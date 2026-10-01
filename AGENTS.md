@@ -260,11 +260,11 @@ print (code) end                           # => needs_data
 | `Stats.mean(xs)` | `Stats.mean xs end` | No `f(a,b)` syntax in boru. |
 | `xs.mean()` | `Stats.mean xs end` | No method-call syntax. |
 | `Stats.mean xs` (no terminator, mid-expression) | `Stats.mean xs end` | The verb swallows the next token without `end`/parens. |
-| `Stats.median s end` on a Summary | pass the raw **List** to `median` | Order statistics need the data; a `Summary` raises `needs_data`. |
+| `Stats.median s end` on a Summary | pass the raw **List** to `median` | Order statistics need the data; a `Summary` raises `needs_data` (inside `do […]`). Written directly at top level, the pre-flight `boru check` already rejects it — with a misleading `type_error: require-list: return value 1: expected List, got Summary` (an upstream checker false positive; see `dx-report.md`). |
 | treat `Stats.variance` as population variance | `Stats.pvariance` for population | Bare `variance`/`stddev` are **sample** (n-1). |
 | keep a pre-`push` copy of a Summary as "before" | `push`/`merge` mutate in place | The argument and the returned value are the **same** object. |
 | `e get code` / `lr get slope` (a bare field name after `get`) | `e.code`, `lr.slope`, or `dot code` in a handler | `get` **evaluates** its key (`xs get i` uses the value of `i`), so a bare field name is an `undefined word`. Use dot access, or quote the name with `/q`. |
-| pass a Stats word as data bare: `xss each Stats.mean` | `xss each Stats.mean/v` | A bare name holding a function **calls** wherever it appears; `/v` hands over the function value. |
+| pass a Stats word as data bare: `[Stats.mean Stats.median]`, or `myfn Stats.mean xs` | `[Stats.mean/v Stats.median/v]`, `myfn Stats.mean/v xs` | A bare name holding a function **calls** wherever it appears (`uncalled_function` / `no_signature` at check); `/v` hands over the function value. (`xs each Stats.mean` happens to work — `each` takes a bare word as its body — but `/v` is always safe.) |
 | `import "boru:test"` *before* `import "./stats.aql"` | import `./stats.aql` first | Upstream type-identity defect on boru main @ `64c5ab2`: Summary-returning words raise `expected Summary, got Summary`. |
 | call the dataset words without `import "boru:matrix-util"` in your script | add the import yourself | The library's deps are not re-exported to callers. |
 | `make Summary {…}` | `Stats.summary xs end` | Construct only via `Stats.summary`. |

@@ -8,8 +8,8 @@ descriptive, inferential, and matrix statistics exposed as the single
 
 See @AGENTS.md for how to call the `Stats` API correctly from boru — the
 calling convention, the full API, copy-paste idioms, and the common
-mistakes to avoid. Every example there is verified against the pinned
-`boru` build.
+mistakes to avoid. Every example there was re-run against boru main @
+`64c5ab2` (2026-10-01).
 
 ## Working on this repository
 

@@ -55,9 +55,12 @@ appears, and `/v` hands over the function instead.
 The **descriptive** words (`count`, `sum`, `mean`, `variance`,
 `pvariance`, `stddev`, `pstddev`, `min`, `max`, `range`, `skewness`,
 `kurtosis`) accept **either a List of numbers or a `Summary`**. The
-**order-statistic** words (`median`, `quantile`, `iqr`, `mode`) and the
-**bivariate** words need the raw data and take a **List only** — calling
-one on a Summary raises `needs_data`.
+**order-statistic** words (`median`, `quantile`, `iqr`, `mode`) and
+`zscores` need the raw data and take a **List only** — calling one on a
+Summary raises `needs_data`. The **bivariate** words (`covariance`,
+`pcovariance`, `correlation`, `linreg`) are typed `[xs:List ys:List]`, so a
+Summary there matches no signature and `boru check` (which every `boru X`
+runs first) rejects the call with `uncalled_function`.
 
 ## Sample vs population
 
@@ -295,7 +298,7 @@ because `get` evaluates its key.
 | Code | Situation |
 |------|-----------|
 | `bad_input` | empty data, too few points for the statistic, a `quantile` `q` outside `[0,1]`, a non-positive sigma, mismatched vector lengths, or a zero-variance predictor |
-| `needs_data` | an order-statistic / bivariate word called on a Summary |
+| `needs_data` | an order-statistic word (`median`/`quantile`/`iqr`/`mode`) or `zscores` called on a Summary |
 | `singular` | `Stats.ols` normal equations have no unique solution |
 | `bad_payload` | `Stats.decode` text is not a `Stats.encode` snapshot |
 

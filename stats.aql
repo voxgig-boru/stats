@@ -57,7 +57,8 @@
 #   bad_input    empty data, too few points for the statistic, a
 #                quantile out of [0,1], a non-positive sigma, or
 #                mismatched vector lengths
-#   needs_data   an order-statistic / bivariate word called on a Summary
+#   needs_data   an order-statistic word (median/quantile/iqr/mode) or
+#                zscores called on a Summary
 #   singular     Stats.ols normal equations have no unique solution
 #   bad_payload  Stats.decode text is not a Stats.encode snapshot
 #

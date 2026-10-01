@@ -193,8 +193,8 @@ wrong answer.
 
 Failures raise coded errors with `raise`: `bad_input` for empty or
 too-small data, an out-of-range quantile, a non-positive sigma, or
-mismatched vector lengths; `needs_data` when an order-statistic or
-bivariate word is handed a Summary; `singular` when the OLS normal
+mismatched vector lengths; `needs_data` when an order-statistic word
+(or `zscores`) is handed a Summary; `singular` when the OLS normal
 equations have no unique solution; `bad_payload` when `decode` is given
 text that is not an `encode` snapshot. Handlers catch them with
 `do […] error […]` and read `code`/`message` (plus any payload fields)
