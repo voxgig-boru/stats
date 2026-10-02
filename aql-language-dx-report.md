@@ -1,5 +1,13 @@
 # A developer-experience report on the boru language
 
+> **Historical record (2026-06-25, boru `12a44e0`).** This report predates
+> boru main's single execution path (2026-09-19: no interpreter, the
+> `--compile` / `--force-compile` / `--no-compile` flags retired), the `/r` →
+> `/v` rename, importer-relative imports, and `get` evaluating its key. Its
+> code samples are kept as written. For the library's state on boru main @
+> `64c5ab2` — what changed, what still reproduces, and the open upstream
+> defects — see [`dx-report.md`](dx-report.md#migration-to-boru-main--64c5ab2-2026-10-01).
+
 **Date:** 2026-06-25
 **Build under test:** `boru-lang/boru` @ `12a44e0`
 (`12a44e0c6ca3f49cd35a871b573fd96bc13d7fd6`, main as of 2026-06-24, PR

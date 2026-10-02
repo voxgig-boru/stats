@@ -7,7 +7,7 @@ description: Use when writing or editing boru code that calls the Stats statisti
 
 Descriptive, inferential, and matrix statistics. Public surface = the
 `Stats` namespace plus the `Summary` type. Everything below is verified
-against `boru @ 6185620` (main, with `boru:matrix-util`).
+against boru main @ `64c5ab2` (2026-09-30).
 
 ## Import
 
@@ -15,9 +15,13 @@ against `boru @ 6185620` (main, with `boru:matrix-util`).
 import "./stats.aql"
 ```
 
-- Path resolves relative to the **working directory the script runs
-  from**, not the importing file.
+- A relative path resolves against the **importing file's own
+  directory** (not the working directory) — from `test/`, write
+  `import "../stats.aql"`.
 - No `end` is needed after `import`.
+- Import `./stats.aql` **before** `boru:test`: importing `boru:test` first
+  trips an upstream type-identity defect on boru main @ `64c5ab2`
+  (`type_error: … expected Summary, got Summary`).
 - The library imports its own deps (`boru:math-util`, `boru:array-util`,
   `boru:matrix-util`, `boru:struct-util`). But if **you** build a `Matrix`
   to pass to the dataset words, add `import "boru:matrix-util"` yourself —
@@ -43,9 +47,12 @@ value(s) come **first** and the `Summary` comes **last**:
 ```boru
 print ((Stats.mean   [1 2 3 4 5] end)) end          # => 3.0
 print ((Stats.median [2 4 4 4 5 5 7 9] end)) end     # => 4.5
-Stats.push 5 s end            # value first, accumulator s LAST
-Stats.push-all [6 7] s end    # list  first, accumulator s LAST
-Stats.merge b a end           # fold b into a; a (the receiver) LAST
+def s (Stats.summary [1 2 3 4] end)
+def a (Stats.summary [1 2 3 4] end)
+def b (Stats.summary [5 6 7 8] end)
+def _1 (Stats.push 5 s end)          # value first, accumulator s LAST
+def _2 (Stats.push-all [6 7] s end)  # list  first, accumulator s LAST
+def _3 (Stats.merge b a end)         # fold b into a; a (the receiver) LAST
 ```
 
 Receiver-last is what makes **piping** work too: because the `Summary`
@@ -53,13 +60,18 @@ is the last param it also binds when it flows in from the **left**, so
 both of these are correct and identical —
 
 ```boru
-Stats.push 5 s end     # forward: value, then receiver
-s Stats.push 5 end     # piping:  receiver from the left, value forward
+def s (Stats.summary [1 2 3] end)
+def _1 (Stats.push 5 s end)     # forward: value, then receiver
+def _2 (s Stats.push 5 end)     # piping:  receiver from the left, value forward
+print ((Stats.count s end)) end # => 5
 ```
 
-The **only** shape that misbinds is *receiver-first-all-forward*
-(`Stats.push s 5`) — the accumulator and the value silently swap, no
-error. Write value-first (`Stats.push 5 s`) or pipe (`s Stats.push 5`).
+The **only** shape that misbinds is *receiver-first-all-forward*. For
+`push`/`push-all` (`Stats.push s 5`) boru main refuses it loudly —
+`uncalled_function: call to 'stat-push' matched no signature` from the
+check that runs before every `boru X`. `Stats.merge a b` (both arguments
+are Summaries) still binds **silently**, folding `a` into `b`. Write
+value-first (`Stats.push 5 s`) or pipe (`s Stats.push 5`).
 
 (The core words `each`/`fold`, indexing `get`, and the matrix accessors
 `MatrixUtil.row`/`col` read their subject from the stack and stay
@@ -92,9 +104,11 @@ The **order-statistic** words take a `List` only.
 | `Stats.cov-matrix mat end` / `cor-matrix` / `standardize` | `Matrix` | Sample covariance / correlation / z-scored columns. |
 | `Stats.ols x ys end` | `List` | Least-squares coefficients (x = design Matrix; prepend a 1s column for an intercept). |
 
-Catch errors with `do […] error […]`; read `e get code`. Codes:
+Catch errors with `do […] error […]`; in the handler read `dot code`
+(or `e.code` on a bound error — `get` evaluates its key, so a bare
+`get code` is `undefined word: code`). Codes:
 `bad_input` (empty/too-few data, q out of range, sigma ≤ 0, length
-mismatch), `needs_data` (order statistic called on a Summary),
+mismatch), `needs_data` (order statistic or `zscores` called on a Summary),
 `singular` (OLS has no unique solution), `bad_payload` (bad decode).
 
 ## Idioms (verified)
@@ -127,7 +141,7 @@ Dataset (rows = observations, cols = variables):
 ```boru
 import "boru:matrix-util"
 def mat (MatrixUtil.create [[1 2] [3 6] [5 10] [7 12]])
-print ((Stats.col-means mat end)) end          # => [4.0 7.5]
+print ((Stats.col-means mat end)) end          # => [4.0, 7.5]
 def cov (Stats.cov-matrix mat end)             # => Matrix(2x2)
 ```
 
@@ -137,19 +151,22 @@ def cov (Stats.cov-matrix mat end)             # => Matrix(2x2)
 |---------|------|-----|
 | `Stats.mean(xs)` / `xs.mean()` | `Stats.mean xs end` | boru has no call/method syntax. |
 | `Stats.mean xs` mid-expression, no terminator | `Stats.mean xs end` | The verb swallows the next token. |
-| `Stats.push s x` / `Stats.merge a b` (receiver first) | `Stats.push x s` / `Stats.merge b a` (receiver **last**), or pipe `s Stats.push x` | Receiver-last convention: the `Summary` is the last arg. Receiver-first-all-forward silently swaps value & accumulator — no error, wrong moments. |
-| `Stats.median s end` on a Summary | pass the raw **List** | Order statistics need the data; a Summary raises `needs_data`. |
+| `Stats.push s x` / `Stats.merge a b` (receiver first) | `Stats.push x s` / `Stats.merge b a` (receiver **last**), or pipe `s Stats.push x` | Receiver-last convention: the `Summary` is the last arg. Receiver-first `push`/`push-all` is rejected by the pre-flight check (`uncalled_function`); receiver-first `merge` (two Summaries) binds **silently** and folds `a` into `b`. |
+| `Stats.median s end` on a Summary | pass the raw **List** | Order statistics need the data; a Summary raises `needs_data` (inside `do […]`; written directly, the pre-flight check rejects it with a misleading `require-list: return value 1` type_error — an upstream checker false positive). |
 | treat `Stats.variance` as population | `Stats.pvariance` for population | Bare `variance`/`stddev` are **sample** (n-1). |
 | keep a pre-`push` copy of a Summary | none — `push`/`merge` mutate in place | The argument and the return value are the same object. |
-| `xs get i` with a variable `i` | `xs get (i)` | Bare words after `get` are read as atom keys; parenthesise variable indices. |
+| `e get code` / `lr get slope` | `e.code` / `lr.slope` / `dot code` in a handler | `get` evaluates its key; a bare field name is an `undefined word`. |
+| `[Stats.mean Stats.median]` / `myfn Stats.mean xs` (a Stats word passed as data) | `[Stats.mean/v Stats.median/v]` / `myfn Stats.mean/v xs` | A bare name holding a function **calls** (`uncalled_function` / `no_signature` at check); `/v` passes the value. (`xs each Stats.mean` happens to work — `each` takes a bare word as its body — but `/v` is always safe.) |
+| `import "boru:test"` before `./stats.aql` | import `./stats.aql` first | Upstream defect on boru main @ `64c5ab2`: `expected Summary, got Summary`. |
 | build a Matrix without importing matrix-util | `import "boru:matrix-util"` in your script | The library's deps are not re-exported to callers. |
-| `"label" print (v) print` | `print (v) end`, one per statement | `print` collects forward; chains print out of order. |
+| `"label" print (v) print` | `print (v)`, one per statement | `print` collects forward (a line break is not a barrier); chains print out of order. |
 
 ## By design (not bugs)
 
 - **Receiver-last binds two ways.** `Stats.push value s` (forward) and
   `s Stats.push value` (piping) are identical; only receiver-first
-  (`Stats.push s value`) misbinds. Same for `push-all` and `merge`.
+  (`Stats.push s value`) misbinds — loudly for `push`/`push-all` (the
+  pre-flight check rejects it), silently for `merge` (two Summaries).
 - **Order statistics need a List, never a Summary.**
   `median`/`quantile`/`iqr`/`mode` raise `needs_data` on a `Summary` —
   the raw data is gone once it's folded into running moments. Keep (or
@@ -162,13 +179,16 @@ def cov (Stats.cov-matrix mat end)             # => Matrix(2x2)
   immutable; `flex {a: 1}` gives a Map you can `set` into. `Summary`
   itself is a sealed `class` — construct it only via `Stats.summary` and
   mutate only through `push`/`push-all`/`merge`.
-- **Integer overflow is fail-loud (intended).** boru `Integer` is 63-bit
-  and overflow **raises**, it does not wrap. Stats floats sums-of-squares
+- **Integer overflow is fail-loud (intended).** boru `Integer` is a
+  signed 64-bit value (max `9223372036854775807`) and overflow **raises**
+  `integer_overflow`, it does not wrap. Stats floats sums-of-squares
   up front (all moment math is `Float`) so large counts don't trip it —
   pass Floats if you're near the edge.
 - **Matrix operand-order gotchas** (only if you build matrices yourself):
-  `MatrixUtil.mat-mul X Y` computes **Y·X** (operands reversed — for
-  `XᵀX` write `MatrixUtil.mat-mul X (MatrixUtil.transpose X)`), and
+  the forward form `MatrixUtil.mat-mul X Y` computes **Y·X** (boru's one
+  argument-order rule: forward args fill the signature in written order,
+  so a non-commutative word reads backwards — for `XᵀX` write
+  `MatrixUtil.mat-mul X (MatrixUtil.transpose X)`), and
   `MatrixUtil.elem` is `(col, row)`, not `(row, col)`. Both are silent
   wrong-shape/out-of-bounds, not clean errors. Prefer `MatrixUtil.row` +
   List indexing.

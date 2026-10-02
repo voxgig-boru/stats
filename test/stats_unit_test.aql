@@ -9,13 +9,19 @@
 # Stats words are called verb-first (`Stats.verb data args… end`).
 #
 # Run:
-#   aql test/stats_unit_test.aql
+#   boru test/stats_unit_test.aql
 
 
+# The library under test is imported FIRST, before `boru:test`: works
+# around a boru runtime defect (a type-ID collision between boru:test's
+# record types and a user module's `class` when boru:test is imported
+# first — every Summary-returning word then raised `type_error: …
+# expected Summary, got Summary`). Remove the ordering constraint when
+# fixed upstream; see dx-report.md "Migration to boru main @ 64c5ab2".
+import "../stats.aql" end
 import "boru:test" end
 import "boru:math-util" end
 import "boru:matrix-util" end
-import "./stats.aql" end
 
 
 # Float tolerance: |a - b| < 1e-9. `a` is the actual value, `b` expected.
@@ -31,6 +37,28 @@ def near fn [
     (MathUtil.abs (a sub b)) lt 0.00001
   ]
 ]
+
+
+# --- call order: words first used AFTER Stats.ols ------------------
+#
+# Keep this block FIRST. On boru main @ 64c5ab2, once `Stats.ols` had run,
+# the first later call of covariance / correlation / zscores / cov-matrix
+# / cor-matrix failed (`undefined word: fx` / `mat`, a `sub` signature
+# error) — a boru runtime defect that stats.aql's solve-linear now works
+# around (dx-report.md D6). The words must be first called here, after
+# `ols`, for this block to guard the workaround.
+
+[
+  def design (MatrixUtil.create [[1 1] [1 2] [1 3] [1 4]])
+  def coef (Stats.ols design [2 3 5 8] end)
+  true ((coef get 1) close 2.0) Assert.ok end
+  1.5 (Stats.covariance [1 2 3 4 5] [2 4 5 4 5] end) Assert.equal end
+  true ((Stats.correlation [1 2 3] [2 4 6] end) close 1.0) Assert.ok end
+  1.0 ((Stats.zscores [1 2 3] end) get 2) Assert.equal end
+  def m (MatrixUtil.create [[1 1] [2 2] [3 3]])
+  1.0 ((Stats.cov-matrix m end) MatrixUtil.elem 0 0) Assert.equal end
+  true (((Stats.cor-matrix m end) MatrixUtil.elem 1 0) close 1.0) Assert.ok end
+] "words-first-used-after-ols" Test.test end
 
 
 # --- central tendency & dispersion (exact) -------------------------
@@ -201,6 +229,10 @@ def near fn [
   bad_input/q  ((do [Stats.covariance [1 2 3] [1 2] end]).code) Assert.equal end
   needs_data/q ((do [Stats.median (Stats.summary [1 2 3] end) end]).code) Assert.equal end
   bad_payload/q ((do [Stats.decode "not a snapshot {" end]).code) Assert.equal end
+  # parseable jsonic that is not a Map (an Integer, a String): bad_payload,
+  # not an escaping signature_error (dx-report.md D7)
+  bad_payload/q ((do [Stats.decode "42" end]).code) Assert.equal end
+  bad_payload/q ((do [Stats.decode "nope" end]).code) Assert.equal end
 ] "error-codes" Test.test end
 
 
@@ -212,7 +244,10 @@ def near fn [
 
 # --- summary -------------------------------------------------------
 
-"---" print
-"fail count: " print Test.fail-count end print
-0 Test.fail-count end Assert.equal end
-"all green" print
+# One `print (value)` per statement: `print` collects a FORWARD argument
+# and a line break is not a barrier, so the older `"---" print` /
+# `"x" print` chain printed out of order on boru main.
+print ("---")
+print (`fail count: ${(Test.fail-count)}`)
+Assert.equal 0 (Test.fail-count)
+print ("all green")

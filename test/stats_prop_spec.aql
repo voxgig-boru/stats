@@ -16,13 +16,32 @@
 # return a Boolean.
 #
 # Run:
-#   aql test/stats_prop_spec.aql
+#   boru test/stats_prop_spec.aql
 
 
+# The library under test is imported FIRST, before `boru:test`: works
+# around a boru runtime defect (a type-ID collision between boru:test's
+# record types and a user module's `class` when boru:test is imported
+# first — every Summary-returning word then raised `type_error: …
+# expected Summary, got Summary`). Remove the ordering constraint when
+# fixed upstream; see dx-report.md "Migration to boru main @ 64c5ab2".
+import "../stats.aql" end
 import "boru:test" end
 import "boru:math-util" end
 import "boru:array-util" end
-import "./stats.aql" end
+
+
+# --- generator -------------------------------------------------------
+#
+# Every generator draws through `_int-list`, a named fn whose body GROUPS
+# the nested member call: `(r.list-of [r.int 0 100] n)`. Written inline,
+# `r.list-of [r.int 0 100] 8` declines its compile stamp and runs on the
+# interpreter (boru COMPILABLE-SUBSET §5, boru-lang/boru#528); grouping it
+# inline compiles but loses `r` in the inner body, and leaving it bare as
+# this fn's result compiles but repeats the first draw — so keep the
+# parens. Same seeded values either way (verified seed by seed).
+
+def _int-list fn [[n:Integer r:Map] [List] [ (r.list-of [r.int 0 100] n) ]]
 
 
 # --- reporting helper ----------------------------------------------
@@ -45,7 +64,7 @@ def specs [
 
   # 1. The mean lies within [min, max].
   (Test.prop "mean-within-range"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs]
         def mu (Stats.mean xs end)
         ((Stats.min xs end) lte mu) and (mu lte (Stats.max xs end))
@@ -53,12 +72,12 @@ def specs [
 
   # 2. Population variance is non-negative.
   (Test.prop "pvariance-non-negative"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs] (Stats.pvariance xs end) gte 0.0 ]])
 
   # 3. The median lies within [min, max].
   (Test.prop "median-within-range"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs]
         def md (Stats.median xs end)
         ((Stats.min xs end) lte md) and (md lte (Stats.max xs end))
@@ -66,7 +85,7 @@ def specs [
 
   # 4. range == max - min, and is non-negative.
   (Test.prop "range-is-max-minus-min"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs]
         def rg (Stats.range xs end)
         (rg gte 0.0) and (rg eq ((Stats.max xs end) sub (Stats.min xs end)))
@@ -74,7 +93,7 @@ def specs [
 
   # 5. The mode is a member of the data.
   (Test.prop "mode-is-a-member"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs]
         def md (Stats.mode xs end)
         def fs (xs each [var [[x] (convert Float x)]])
@@ -83,7 +102,7 @@ def specs [
 
   # 6. count equals the input length.
   (Test.prop "count-equals-length"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs] (Stats.count xs end) eq (xs size) ]])
 
 ]
@@ -101,7 +120,10 @@ def _ (specs each [
 
 # --- summary -------------------------------------------------------
 
-"---" print
-"fail count: " print Test.fail-count end print
-0 Test.fail-count end Assert.equal end
-"all green" print
+# One `print (value)` per statement: `print` collects a FORWARD argument
+# and a line break is not a barrier, so the older `"---" print` /
+# `"x" print` chain printed out of order on boru main.
+print ("---")
+print (`fail count: ${(Test.fail-count)}`)
+Assert.equal 0 (Test.fail-count)
+print ("all green")

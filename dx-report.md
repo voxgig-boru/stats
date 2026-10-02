@@ -15,6 +15,322 @@ and `boru --compile` (identical to the interpreter), enforced by
 Severity: **🔴 high** (silent wrong results / crash / blocks a use case) ·
 **🟡 medium** (friction, clear workaround) · **🟢 low** (papercut).
 
+> **Current status:** the library and all five suites run green on boru
+> main @ `64c5ab2` — see the next section. Everything after it is the
+> original 2026-06-25 report and its 2026-07-11 upgrade note, kept as
+> history; the table in the next section gives each finding's status on
+> main.
+
+---
+
+## Migration to boru main @ 64c5ab2 (2026-10-01)
+
+**boru build under test:** boru-lang/boru main @ `64c5ab2` (2026-09-30;
+`boru -version` → `boru 0.1.0-dev (git 64c5ab2f3aed)`), 1,587 commits past
+the last verified build (`6185620`, 2026-07-21).
+
+**Result.** All five suites exit 0 and print `all green` under `boru X`
+— which on main means they **fully compile** (there is one execution
+path now: bytecode on the VM, or `compile_failed`) — and `boru check`
+reports **0 errors, 0 warnings** on every suite and on `stats.aql` (one
+info each, below). `test/divergence/run.sh` enforces exactly that.
+
+### Breaking changes hit (language drift, migrated idiomatically)
+
+| # | Change on main | What it broke here | Migration |
+|---|----------------|--------------------|-----------|
+| 1 | `/r` renamed `/v` (ADR-011, 2026-08-19); `ref` → `valof` | the `export "Stats" {…: stat-x/r}` map no longer parsed | `stat-x/v` |
+| 2 | Relative imports resolve against the **importing file's** directory (run and check) | every suite's `import "./stats.aql"` | `import "../stats.aql"` in `test/`; docs reworded |
+| 3 | One execution path; `--compile` / `--force-compile` / `--no-compile` and `BORU_*COMPILE` retired | `test/divergence/run.sh` compared those modes | harness rewritten: compiled run + check gate |
+| 4 | `print` collects a forward argument and **a line break is not a barrier** | each suite's tail `"---" print` / `"fail count: " print …` printed out of order and left `"---"` on the stack for `Assert.equal` (`expected 9, got ---`) | one `print (value)` per statement; `Assert.equal 0 (Test.fail-count)` |
+| 5 | `get` evaluates its key (bare field names are words) | docs: `lr get slope`, handler `error [get code]` → `undefined word` | `lr.slope`; handler `error [dot code]` |
+| 6 | A bare name holding a function **calls** wherever it appears | nothing in the library (no fn values passed); a caller passing a Stats word as data | docs: `xss each Stats.mean/v` |
+| 7 | `Test.check-prop` leaves its PropertyResult map on the stack | `stats_prop_test` ended with five maps printed after `all green` | `end drop` after each call (results are read back via `Test.results`) |
+| 8 | Receiver-first `Stats.push s x` / `Stats.push-all s xs` is now **loud** (`uncalled_function`, at check) instead of a silent swap | — (an improvement) | docs updated; `Stats.merge a b` (two Summaries) is still silent |
+| 9 | Map/record printing is insertion-ordered | doc outputs of `Stats.encode` / `linreg` showed sorted keys | docs updated to the real output (`{n:5 mean:3.0 m2:…}`) |
+| 10 | Float last-ulp: `Stats.correlation [1 2 3 4 5] [2 4 5 4 5]` is `0.7745966692414833` (was `…834`) | doc comments only (tests are tolerance-checked) | docs updated |
+
+No test case, expected value or tolerance was changed or removed. The
+verification pass only *added* cases, for D6 and D7 below. (`Assert.equal x y
+<=> y x Assert.equal`, and its documented stack order is *actual first,
+expected second*. The suite summaries' forward `Assert.equal 0
+(Test.fail-count)` therefore labels correctly — `expected 0, got N`. The
+older stack-form assertions inside `stats_unit_test`'s `Test.test` bodies
+write the expected value first (`3.0 (Stats.mean xs end) Assert.equal`), so
+a failure there labels the two the other way round. Equality is symmetric,
+so pass/fail is unaffected; those assertions were left as written.)
+
+### Upstream defects worked around (minimal repros)
+
+**D1 🔴 runtime answer bug — a name read inside `do {k: [expr]}` leaks.**
+A fn-local name read inside a `do {…}` map value makes a same-named local
+(var- *or* def-bound) unresolvable — later in the same `each` body, and
+in a **later, unrelated fn**:
+
+```boru
+def f fn [[x:Integer] [Map] [ def r (x add 1) do {k: [r]} ]]
+def g fn [[xs:List] [List] [ xs each [var [[r] r]] ]]
+print (f 1)      # {"k": 2}
+print (g [1 2])  # expected [1, 2]; actual: undefined word: r
+```
+
+```boru
+def f fn [[xs:List] [Map] [ def fs xs do {k: [fs get 0]} ]]
+def g fn [[xs:List] [List] [ def fs xs  fs each [var [[x] (x add 1)]] ]]
+print (f [1 2])  # {"k": 1}
+print (g [1 2])  # expected [2, 3]; actual: undefined word: fs
+```
+
+Here it surfaced three ways: `Stats.mode` (`undefined word: v` from its own
+`do {…}` state maps), `Stats.ols` after `Stats.linreg` (`linreg`'s
+`do {… r: [r] …}` broke `solve-linear`'s pivot fold `[var [[r best] …]]`),
+and `Stats.zscores` after `Stats.mode` (`undefined word: fs`). That last
+one made one failing `Test.test` block break later, unrelated blocks.
+Not in NUR.md (unrecorded). **Workaround:** every `do {k: [expr]}` map in
+`stats.aql` (`mode`, `linreg`, `encode`) is now a plain map literal
+`{k: (expr)}` — map values auto-evaluate on main, so this is the idiomatic
+spelling anyway. Commented in place.
+
+**D2 🟡 compile defect (NUR356 family) — a map literal as an `if` arm.**
+
+```boru
+print ({cur: 0} [1 2 3] [var [[v st] if (v gt 1) [{cur: v}] [st] ]] fold)
+# [boru/compile_failed]: … fn fold$body: a branch arm leaves a list or map
+# literal the interpreter keeps pending past the `if` … (NUR356)
+```
+
+**Workaround:** `Stats.mode` binds both candidate states with `def` before
+the `if` and the arms only name them (`if (…) [won] [st1]`). Commented in
+place; remove when NUR356 is closed.
+
+**D3 🔴 runtime answer bug — `boru:test` breaks a user class's identity.**
+Importing `boru:test` before a module that mints a `class` makes that
+class's fn **return** check (and `is M.Box` at the importer) fail:
+
+```boru
+# m.boru
+def Box class {n: 0}
+def mk fn [[x:Integer] [Box] [ make Box {n: x} ]]
+export "M" {mk: mk/v, Box}
+
+# main.boru
+import "boru:test"
+import "./m.boru"
+print (M.mk 1)   # expected Class/Box{n:1}
+                 # actual: type_error: mk: return value 1: expected Box, got Box
+```
+
+Swapping the two imports fixes it. The likely cause is a minted-type-ID
+collision: the VM's RET check canonicalises the declared type by ID in the
+running registry (`core.CanonicalType`), and `boru:test`'s own record types
+(`TestCase`, `TestSpec`, …) appear to be minted on a separate counter
+(cf. `design/OPEN-WORDS.0.md` §5.2's "known residual"). Here it made
+**every** property in both property suites fail on the first generated
+input, and every `Summary`-returning case in `stats_unit_spec` fail.
+Unrecorded. **Workaround:** each suite imports `../stats.aql` **before**
+`boru:test` (commented in place), and the docs tell callers to do the same.
+No library-side workaround exists short of dropping the `Summary` return
+annotations.
+
+**D4 🟢 checker false positive — a handler-less `do` is typed as its
+body.** `def e (do [Stats.variance [5]])` then `e.code` is reported as
+`no_signature: cannot call dot … got (Float, Word)` (the check blocks the
+run), though at run time `do` returns the Error and `e.code` is
+`bad_input`. Minimal form: any fn declared `[Float]` that raises, then
+`def e (do [f 0])  print (e.code)`. The unit suite's
+`((do […]).code)` reads sit inside `Test.test` bodies and check clean;
+the docs use the handler form `error [dot code]`. Unrecorded.
+
+**D5 🟢 checker false positive — a raising guard arm is not treated as
+diverging.** A fn whose guard `if` *raises* on a wrong-typed argument and
+otherwise returns the argument is modelled by the check as falling through
+to its tail, so a statically-known wrong argument reports a false
+return-contract `type_error` instead of the `raise`:
+
+```boru
+def need-list fn [[x:Any] [List] [
+  if (x is Map) [
+    def msg `needs a List`
+    raise needs_data msg
+  ] []
+  x
+]]
+print (need-list {v: 1})
+# expected: the run raises [boru/needs_data]: needs a List
+# actual:   check (which blocks the run): [error] type_error: need-list:
+#           return value 1: expected List, got Map
+```
+
+In this library it is `require-list`: a direct top-level `Stats.median s end`
+on a Summary is rejected before the run with `type_error: require-list:
+return value 1: expected List, got Summary` — and, because `require-list`
+lives in the imported module, the caret points at a line number of
+`stats.aql` (192) rendered against the *caller's* file. The program would
+fail anyway (with `needs_data`), so no valid code is blocked; inside
+`do […]` the check downgrades it to info and the run raises `needs_data`
+as documented. Unrecorded. No workaround applied (the guard is correct);
+the docs note the misleading message.
+
+**D6 🔴 runtime answer bug — a `def` in a nested `if` arm breaks a later
+first call (found by the post-migration verification).** None of the
+suites saw this, because each first calls the affected words *before*
+`Stats.ols`. A caller who runs `Stats.ols` first got, on the first later
+call of `covariance` / `correlation` (`undefined word: fx`), `cov-matrix`
+/ `cor-matrix` (`undefined word: mat`) or `zscores` (`cannot call sub` —
+its `x` misread). Once a word had been called, it kept working. The
+trigger was `solve-linear`'s `def msg` in an `if` arm (never taken) inside
+its elimination `each` body. A three-fn module reproduces it, but only
+across an `import`; the same code in one file is fine:
+
+```boru
+# lib.boru
+def a fn [[xs:List] [List] [
+  xs each [var [[c]
+    if (c lt 100) [] [
+      def msg `big`
+    ]
+    0
+  ]]
+]]
+def c fn [[xs:List] [Float] [
+  def fx xs
+  0.0 xs [var [[i acc] acc add (fx get 0)]] fold
+]]
+def b fn [[xs:List] [Float] [
+  if ((xs size) gte 1) [] [
+    def msg `empty`
+    raise bad_input msg
+  ]
+  c xs
+]]
+export "M" {a: a/v, b: b/v}
+
+# main.boru
+import "./lib.boru"
+print (M.a [1 2])       # [0, 0]
+print (M.b [1.0 2.0])   # expected 2.0; actual: fold: step 0: undefined word: fx
+```
+
+Renaming either `msg`, calling `M.b` before `M.a`, or raising without the
+`def` all make it go away. It looks like the same family as D1 (a
+fn-local `def` in a nested body leaking into a later fn's name
+resolution). Unrecorded. **Workaround:** `solve-linear`'s message def is
+named `singular-msg` (commented in place). `stats_unit_test` now opens with
+a `words-first-used-after-ols` block that first-calls the five words after
+`Stats.ols`. Without the workaround it fails, and so do the `bivariate`,
+`distributions` and `dataset` blocks after it.
+
+To look for other call-order effects, the verification ran a sweep. For
+each of 37 public call shapes plus 9 error-path calls (`do [...] error
+[...]` around a raising call), it ran a program that makes that call first
+and then calls every other public word, comparing each result with the
+word run alone. On the unfixed module the only first calls that broke
+later words were `ols` and the singular-`ols` error path (the five words
+above). With the workaround, nothing differs.
+
+**D7 🔴 runtime defect — a `!.` dispatch failure escapes `do … error`.**
+Inside a fn, `!.` on a non-Map value produced by a native call is not
+trapped by the surrounding `do […] error […]`, nor by the caller's. The VM
+raises an untrappable error instead of the canonical `signature_error`:
+`cannot call dotr` at top level, and `[boru/internal_error]: bytecode:
+internal: CALL_NATIVE_POLY no match for dotr` under `Test.test`. At top
+level the same read *is* trapped, and `get "n"` is trapped too:
+
+```boru
+import "boru:struct-util"
+def f fn [[text:String] [Any] [
+  def payload (StructUtil.parse text)
+  do [ (payload !. n) ] error [ 0 ]
+]]
+print (f "42")   # expected 0; actual: error: [boru/signature_error]: cannot call `dotr`
+```
+
+In this library, `Stats.decode "42"` (or `"nope"`: any jsonic that parses
+to a non-Map) escaped as that error instead of the documented
+`bad_payload`. Unrecorded. **Workaround:** `stat-decode` checks
+`payload is Map` before the field reads and raises `bad_payload` with the
+existing "not a Stats.encode snapshot" message, which is the error the
+old handler produced. `stats_unit_test`'s `error-codes` block now covers
+`"42"` and `"nope"`.
+
+**Info-level check notes (not gating).** `boru check stats.aql` reports
+one `redundant_guard` info in `as-summary` ("guard is always true: x is
+already List") — imprecise, since the parameter is `(List tor Summary)`;
+the guard is kept. Each suite additionally reports the standard
+`module_body_executed_in_check` info for the import.
+
+### Property-test generators now compile too (2026-10-02)
+
+Every suite compiled as a program, but the property suites' **generator
+bodies** — runtime callbacks handed to `Test.check-prop` / `Test.prop` —
+declined their compile stamp and ran on the interpreter: `boru
+-compile-report` listed 11 sites (6 in `stats_prop_spec`, 5 in
+`stats_prop_test`), all `r.list-of [r.int 0 100] n` and all `closure
+storedfn$body: unapplied fn-value in body residual (dynamic apply not
+lowered)` (boru COMPILABLE-SUBSET §5, boru-lang/boru#528). **Rewrite:**
+each suite defines `def _int-list fn [[n:Integer r:Map] [List] [
+(r.list-of [r.int 0 100] n) ]]` and every generator is `[ (_int-list 8
+r) ]` (or `6`). Declines **11 → 0** (6 → 0 and 5 → 0); no site was left.
+The named fn and the parens inside it are both load-bearing: the two
+shorter spellings are known compiler divergences and both recur here —
+grouping the call inline
+(`[ (r.list-of [r.int 0 100] 8) ]`) compiles but the inner body loses `r`
+(the property reports `ok:false`, `undefined word: r`), and leaving it
+bare as the fn's result compiles but repeats the first draw (`[74 74 74
+…]` where the interpreter draws `[74 87 38 …]`) — which every property
+here would still pass, silently. Semantics were proved outside the repo:
+old (interpreted) and new (compiled) generators printed every generated
+list through `Test.check-prop` at seeds 1 (100 runs), 4, 250 and 99999
+(30 runs each), for both list sizes, plus through `Test.run-property` —
+480 lists, byte-identical — and the suites' eleven real properties at
+their own runs/seed/max-shrinks, plus three deliberately failing ones
+(failing and shrunk inputs), gave identical result maps. No run count,
+seed, max-shrinks, property or assertion changed; both suites' output is
+byte-identical before and after.
+
+An independent re-check used sub-seeds disjoint from those. Each iteration
+draws from sub-seed `seed + i`, so the seed-4 runs above re-cover seed 1's.
+The re-check covered 446 lists at those seeds: `check-prop` at seeds 501,
+−1000, 31337, 777777 and 123456789, and bodies taken from the `Test.prop`
+map at seeds 2001, −55555 and 4242424. It added 200 lists at the
+`run-property` defaults (seed 1). It also ran the eleven real properties
+at seeds 613, −4096 and 9000001. Finally it ran 36 failing properties
+(34 at fresh seeds, 2 at the `run-property` defaults) at shrink budgets
+of 13 to 200, comparing `failing-input`, `shrunk-input`, `shrunk-source`
+and `shrunk-cost`. Every output was byte-identical.
+
+**What the 0 does not cover.** `-compile-report` lists runtime stamp
+attempts only. The element body `[r.int 0 100]`, which `r.list-of` runs
+once per element, is never one. `r` is a run-time Map, so the call site
+cannot hand `rand-list-of` a compiled closure, and the native runs each
+element on a pooled interpreter sub-engine, before and after the rewrite.
+boru's interpreter-entry hook shows this. A Go probe over
+`RunCompiledReason` at seed 4, drawing 8-element lists, counts per list:
+
+- the old inline form: 1 `CallBoru` (the declined generator) and 9
+  `Engine.Run`;
+- `_int-list`: no `CallBoru` and 8 `Engine.Run`, one per drawn element (3
+  per list at length 3).
+
+So the rewrite moves the generator body onto the VM, but not the draws. A
+hand loop in the fn, `[ [for n [r.int 0 100]] ]`, draws the same values,
+but its generator declines again ("for: body nets multiple values per
+iteration"). On `64c5ab2`, `_int-list` is the best available spelling.
+
+### Status of the original findings on main
+
+| # | Original finding | On main @ `64c5ab2` |
+|---|------------------|---------------------|
+| 1 | `get`/`set` read a bare variable index as an atom key | **Fixed** — `get` evaluates its key (`xs get i` is `xs[i]`); bare *field names* now need `.field` / `dot` / `/q` |
+| 2 | `{k: [expr]}` evaluates only under `do` | Still true (`{k: [v]}` is a one-element List) — but `{k: (expr)}` / `{k: v}` evaluate, and `do {…}` now trips D1: prefer `{k: (expr)}` |
+| 3 | `mat-mul X Y` computes Y·X | Unchanged, and now documented as boru's one argument-order rule (forward args fill the signature in written order), not a special case |
+| 4 | `MatrixUtil.elem` is `(col, row)` written forward | Unchanged (same rule; `m MatrixUtil.elem 1 0` reads row 0, col 1) |
+| 5 | `StructUtil.parse` collapses `42.0` → Integer | Fixed (since 2026-06-25) |
+| 6 | checker `Any`→typed dispatch as an error | The union-param shape checks with 0 errors; now an info-level `redundant_guard` (above) |
+| 7 | empty `[]` poisons top-level query types | Fixed — `def acc (Stats.summary [] end)` then `Stats.mean acc` checks clean |
+| 8 | one-letter uppercase names parse as type variables | Still true (`def M (Stats.summary [1] end)` → `type: body must be a type value or literal`) |
+| 9 | `print` forward-collection reverses chains | Still true, and a line break is not a barrier (row 4 above) |
+
 ---
 
 ## Update (DX-driven boru fixes)

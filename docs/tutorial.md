@@ -6,7 +6,7 @@ streams data through a running accumulator, merges two of them, and
 finishes with a tiny dataset and a correlation. You need no prior
 statistics beyond what "mean" and "standard deviation" mean — just a
 working `boru` binary (see
-[How-to → Install and run](how-to.md#install-and-run-aql)) and this
+[How-to → Install and run](how-to.md#install-and-run-boru)) and this
 repository checked out.
 
 > **AI agents:** for the calling convention and a verified cheat-sheet,
@@ -167,7 +167,7 @@ print (`col-means: ${(Stats.col-means mat end)}`) end
 ```console
 $ boru relate.aql
 correlation: 0.7745966692414833
-linreg:      {intercept:2.2 r:0.7745966692414834 r2:0.6000000000000001 slope:0.6}
+linreg:      {slope:0.6 intercept:2.2 r:0.7745966692414834 r2:0.6000000000000001}
 col-means: [4.0 7.5]
 ```
 

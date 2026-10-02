@@ -111,7 +111,8 @@ test/stats_prop_test.aql   property-based tests — direct (Test.check-prop)
 test/stats_prop_spec.aql   property-based tests — declarative spec format
 test/stats_smoke_test.aql  end-to-end smoke run over every public word
 docs/                      documentation (above)
-dx-report.md               developer-experience notes (current pin: boru @ 6185620)
+test/divergence/run.sh     the gate: every suite runs green compiled + 0 check errors
+dx-report.md               developer-experience notes (verified: boru main @ 64c5ab2)
 proposals/                 language proposals raised from this module's DX
 ```
 
@@ -121,8 +122,8 @@ or property).
 
 ## Running it
 
-Build the `boru` interpreter, then run any script or test — see
-[How-to → Install and run](docs/how-to.md#install-and-run-aql) and
+Build the `boru` CLI from boru main, then run any script or test — see
+[How-to → Install and run](docs/how-to.md#install-and-run-boru) and
 [Run the tests](docs/how-to.md#run-the-tests):
 
 ```bash
@@ -133,11 +134,13 @@ boru test/stats_prop_spec.aql   # property tests — declarative spec format
 boru test/stats_smoke_test.aql  # end-to-end smoke run
 ```
 
-A GitHub Actions workflow
-([`.github/workflows/test.yml`](.github/workflows/test.yml)) builds boru from a
-pinned commit and runs every suite through the interpreter, `boru check`, and
-the byte compiler — plus a `consistency` job (agent-skill drift, JSON
-manifests, and a pinned-ref guard) — on each push and pull request.
+`boru X` compiles the program to bytecode and runs it on the VM (the only
+execution path on boru main), after a static pre-flight check. A GitHub
+Actions workflow ([`.github/workflows/test.yml`](.github/workflows/test.yml))
+builds boru from the current main HEAD and runs every suite, plus the
+[`test/divergence/run.sh`](test/divergence/README.md) gate (every suite runs
+green compiled and every file checks with 0 errors) and a `consistency` job
+(agent-skill drift, JSON manifests) on each push and pull request.
 
 ## License
 

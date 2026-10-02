@@ -17,8 +17,10 @@ Import it with:
 import "./stats.aql"
 ```
 
-(No `end` is required after `import` on the pinned build; a trailing
-`end` is harmless.) A consuming script does **not** need to import
+(No `end` is required after `import`; a trailing `end` is harmless. A
+relative import path resolves against the importing file's own
+directory, not the working directory. Import the library **before**
+`boru:test` — see the note under [Errors at a glance](#errors-at-a-glance).) A consuming script does **not** need to import
 `boru:math-util`, `boru:array-util`, `boru:matrix-util`, or
 `boru:struct-util` itself — `stats.aql` imports them internally. The one
 exception: scripts that build a `Matrix` to pass to the dataset words
@@ -38,8 +40,13 @@ behaviour, not specific to this module. There is no `f(x)` or `x.f()`
 syntax.
 
 Inputs may be Integer or Float; all arithmetic is done in Float, so
-results are Float (`count` returns Integer). When indexing a List with a
-variable, parenthesise the index: `xs get (i)`.
+results are Float (`count` returns Integer). `get` evaluates its key, so
+`xs get i` and `xs get (i)` both index by the value of `i`; read a named
+field with dot access (`fit.slope`), not `fit get slope`.
+
+To pass a `Stats` word itself as a value (to `each`, say), write
+`Stats.mean/v`: a bare name that holds a function **calls** wherever it
+appears, and `/v` hands over the function instead.
 
 ---
 
@@ -48,9 +55,12 @@ variable, parenthesise the index: `xs get (i)`.
 The **descriptive** words (`count`, `sum`, `mean`, `variance`,
 `pvariance`, `stddev`, `pstddev`, `min`, `max`, `range`, `skewness`,
 `kurtosis`) accept **either a List of numbers or a `Summary`**. The
-**order-statistic** words (`median`, `quantile`, `iqr`, `mode`) and the
-**bivariate** words need the raw data and take a **List only** — calling
-one on a Summary raises `needs_data`.
+**order-statistic** words (`median`, `quantile`, `iqr`, `mode`) and
+`zscores` need the raw data and take a **List only** — calling one on a
+Summary raises `needs_data`. The **bivariate** words (`covariance`,
+`pcovariance`, `correlation`, `linreg`) are typed `[xs:List ys:List]`, so a
+Summary there matches no signature and `boru check` (which every `boru X`
+runs first) rejects the call with `uncalled_function`.
 
 ## Sample vs population
 
@@ -149,7 +159,7 @@ Snapshot a Summary's moments as a jsonic String.
 
 ```boru
 print ((Stats.encode (Stats.summary [1 2 3 4 5] end) end)) end
-# => {m2:10.0 m3:0.0 m4:34.0 max:5.0 mean:3.0 min:1.0 n:5}
+# => {n:5 mean:3.0 m2:10.0 m3:0.0 m4:34.0 min:1.0 max:5.0}
 ```
 
 Round-trips through `Stats.decode`.
@@ -165,8 +175,8 @@ Rebuild a Summary from an `encode` snapshot.
 | **Returns** | `Summary` |
 | **Errors**  | `bad_payload` when the text is unparseable or missing a field |
 
-Whole-valued Floats render without a decimal point, so `decode` coerces
-each field's type back (Integer `n`, Float moments).
+Whole-valued Float moments render with their decimal point (`10.0`) and
+parse back as Float, so `decode` only coerces the count `n` to Integer.
 
 ---
 
@@ -229,8 +239,8 @@ Two equal-length Lists; mismatched lengths raise `bad_input`.
 
 ```boru
 def fit (Stats.linreg [1 2 3 4 5] [2 4 5 4 5] end)
-print ((fit get slope)) end       # => 0.6
-print ((fit get intercept)) end   # => 2.2
+print (fit.slope) end       # => 0.6
+print (fit.intercept) end   # => 2.2
 ```
 
 ---
@@ -279,16 +289,26 @@ print ((Stats.ols design [2 3 5 8] end)) end            # => [-0.5, 2.0]
 
 ## Errors at a glance
 
-All failures raise coded errors; catch with `do […] error […]` and read
-`e get code` / `e get message` (dispatch on several codes with `case`).
+All failures raise coded errors; catch with `do […] error […]` and, in
+the handler (where the Error is on the stack), read `dot code` /
+`dot message` — or `e.code` on a bound error (dispatch on several codes
+with `case`). A bare `get code` is an `undefined word: code` error,
+because `get` evaluates its key.
 
 | Code | Situation |
 |------|-----------|
 | `bad_input` | empty data, too few points for the statistic, a `quantile` `q` outside `[0,1]`, a non-positive sigma, mismatched vector lengths, or a zero-variance predictor |
-| `needs_data` | an order-statistic / bivariate word called on a Summary |
+| `needs_data` | an order-statistic word (`median`/`quantile`/`iqr`/`mode`) or `zscores` called on a Summary |
 | `singular` | `Stats.ols` normal equations have no unique solution |
 | `bad_payload` | `Stats.decode` text is not a `Stats.encode` snapshot |
 
 A missing `end` after a `Stats.*` call is not a module error but a
 general boru dispatch problem — the word collects the following token
 (add `end` or parens).
+
+**Upstream defect (boru main @ `64c5ab2`):** a script that imports
+`boru:test` *before* `./stats.aql` sees every Summary-returning word raise
+`type_error: … expected Summary, got Summary` (a type-identity collision
+between `boru:test`'s record types and this module's `class`). Import the
+library first. Details and the minimal repro are in
+[`dx-report.md`](../dx-report.md#migration-to-boru-main--64c5ab2-2026-10-01).

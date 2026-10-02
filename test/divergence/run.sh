@@ -1,43 +1,42 @@
 #!/usr/bin/env bash
-# Run every test suite through all three aql execution surfaces and assert
-# none of them errors or disagrees:
+# Run every test suite (and the library module) through the two boru
+# surfaces that exist on boru main, and fail on any error:
 #
-#   interpreter   aql X                  the default — what CI and users run
-#   check         boru check X            static type-check (must be 0 errors)
-#   byte compiler boru --compile X        bytecode when compilable, else a SILENT
-#                                        fallback to the interpreter; documented
-#                                        to be IDENTICAL to it ("opt-in
-#                                        performance, never semantics")
+#   run     boru X          compile to bytecode and run on the VM — the ONLY
+#                           execution path (see below); must exit 0, and an
+#                           assertion-bearing suite (all but NO_ASSERT) must
+#                           print `all green` as its last output line
+#   check   boru check X    static type-check; must report 0 errors
 #
-# Plus an informational `boru --force-compile X` line per suite — how much of
-# each program the emitter can fully lower today (refusals there are expected
-# coverage gaps; under --compile they fall back, so they are not failures).
+# Single-path model. Since boru main 2026-09-19 a program compiles to
+# bytecode and runs on the VM, or it fails with `[boru/compile_failed] …
+# this is a compiler defect`. There is no interpreter fallback any more, and
+# the flags this harness used to compare (`--compile`, `--force-compile`,
+# `--no-compile`, and the BORU_COMPILE / BORU_FORCE_COMPILE / BORU_NO_COMPILE
+# env vars) are RETIRED — passing one is a usage error. The old INTERPRETER /
+# BYTECODE / force-compile-coverage columns therefore have nothing left to
+# compare: "the suite runs" now *means* "the suite fully compiles". What
+# remains to gate is that every suite runs green compiled and checks clean.
 #
-# A check error, a non-zero interpreter run, or any difference between
-# `boru --compile X` and `aql X` fails the script. This harness builds its OWN
-# aql at the ref below (it equals the library's pin since the bump to 407feda,
-# but pinning it here keeps the harness self-contained — it never depends on
-# whatever aql is on PATH). Cached under ~/.cache/aql-divergence; needs `go` +
-# network for the one-time build, fetched as a source tarball from
-# codeload.github.com so it works even where raw `git clone` of boru-lang/boru
-# is blocked.
+# `boru X` also runs the static pre-flight check by default (a check error
+# blocks the run); this harness never passes `-no-check`.
+#
+# The harness builds its OWN boru at boru-lang/boru main HEAD (resolved at run
+# time, cached by SHA under ~/.cache/boru-divergence), so it never depends on
+# whatever boru is on PATH. The source is fetched as a codeload tarball
+# (curl), so it builds even where a raw `git clone` of boru-lang/boru is
+# blocked; needs `go` + network for the one-time build. Overrides:
+#
+#   BORU=/path/to/boru      use an existing binary; skip the fetch + build
+#   BORU_REF=<sha>          build this boru commit instead of main HEAD
 set -uo pipefail
-
-# boru-lang/boru @ main, 2026-06-24 (PR #182, claude/aql-client-issues-6b8new) —
-# the same commit the library now pins. It fixes the two regressions this
-# library's reports flagged. This is the same commit the library now pins
-# (see .github/workflows/test.yml BORU_REF) — `boru:matrix-util` and the gradual-Any /
-# union-narrowing behaviour this stats module relies on are present, and
-# all five suites interpret, check (0 errors), and compile identically to
-# the interpreter on it. Bump in lockstep with the workflow BORU_REF.
-# Track boru-lang/boru MAIN: resolve its current HEAD at run time (no pinned
-# commit). Cached by the resolved SHA, so it rebuilds only when main advances.
-AQL_BYTECODE_REF="${AQL_BYTECODE_REF:-$(git ls-remote https://github.com/boru-lang/boru.git main | cut -f1)}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-CACHE="$HOME/.cache/aql-divergence"
-AQL="$CACHE/aql-$AQL_BYTECODE_REF"
+
+MODULES="
+stats.aql
+"
 
 SUITES="
 test/stats_unit_test.aql
@@ -47,73 +46,102 @@ test/stats_prop_spec.aql
 test/stats_smoke_test.aql
 "
 
+# Suites that carry no assertions (pass = a clean exit). EVERY other suite is
+# assertion-bearing and must end by printing `all green` as its LAST output
+# line — so a suite that drops its tail assertion, or leaves residue after it
+# (e.g. an unbound Test.check-prop result), fails the gate.
+NO_ASSERT="
+test/stats_smoke_test.aql
+"
+
 log() { echo "[divergence] $*"; }
 
-# --- build aql at the bytecode-capable ref -------------------------------
-if [ ! -x "$AQL" ]; then
-  command -v go >/dev/null 2>&1 || { echo "error: Go toolchain not found." >&2; exit 1; }
-  log "building aql @ $AQL_BYTECODE_REF (one-time; cached) …"
-  src="$(mktemp -d)"
-  curl -fsSL "https://codeload.github.com/boru-lang/boru/tar.gz/$AQL_BYTECODE_REF" \
-    | tar -xz -C "$src" --strip-components=1 || { echo "error: fetch/extract failed." >&2; exit 1; }
-  mkdir -p "$CACHE"
-  ( cd "$src/cmd/go" && GOWORK=off GOFLAGS=-mod=mod go build \
-      -ldflags "-X github.com/boru-lang/boru/cmd/go.Version=$AQL_BYTECODE_REF" \
-      -o "$AQL" ./boru ) || { echo "error: build failed." >&2; exit 1; }
-  rm -rf "$src"
+# --- locate or build boru -------------------------------------------------
+if [ -n "${BORU:-}" ]; then
+  [ -x "$BORU" ] || { echo "error: BORU=$BORU is not an executable." >&2; exit 1; }
+else
+  BORU_REF="${BORU_REF:-$(git ls-remote https://github.com/boru-lang/boru.git main | cut -f1)}"
+  [ -n "$BORU_REF" ] || { echo "error: could not resolve boru main HEAD (network?); set BORU=/path/to/boru." >&2; exit 1; }
+  # A symbolic ref (main, a tag, feature/x, refs/heads/main) is mutable and may
+  # contain '/': resolve it to the commit it names, so the cache key below is
+  # immutable and a valid file name. A hex SHA (full or abbreviated) is used as given.
+  case "$BORU_REF" in
+    *[!0-9a-f]*)
+      _sha="$(git ls-remote https://github.com/boru-lang/boru.git "$BORU_REF" 2>/dev/null | awk -v r="$BORU_REF" '
+        $2==r || $2=="refs/heads/"r {h=$1} $2=="refs/tags/"r {t=$1} $2=="refs/tags/"r"^{}" {p=$1}
+        END {print (h!="" ? h : (p!="" ? p : t))}')"
+      [ -n "$_sha" ] || { echo "error: could not resolve BORU_REF=$BORU_REF to a boru-lang/boru commit (network?); pass a commit SHA or set BORU=/path/to/boru." >&2; exit 1; }
+      BORU_REF="$_sha" ;;
+  esac
+  CACHE="$HOME/.cache/boru-divergence"
+  BORU="$CACHE/boru-$BORU_REF"
+  if [ ! -x "$BORU" ]; then
+    command -v go >/dev/null 2>&1 || { echo "error: Go toolchain not found." >&2; exit 1; }
+    log "building boru @ $BORU_REF (one-time; cached) …"
+    src="$(mktemp -d)"
+    curl -fsSL "https://codeload.github.com/boru-lang/boru/tar.gz/$BORU_REF" \
+      | tar -xz -C "$src" --strip-components=1 || { echo "error: fetch/extract failed." >&2; exit 1; }
+    mkdir -p "$CACHE"
+    # The CLI's main package is cmd/go/boru (the binary is `boru`, not `aql`).
+    ( cd "$src/cmd/go" && GOWORK=off GOFLAGS=-mod=mod go build \
+        -ldflags "-X github.com/boru-lang/boru/cmd/go.Version=$BORU_REF" \
+        -o "$BORU" ./boru ) || { echo "error: build failed." >&2; exit 1; }
+    rm -rf "$src"
+  fi
 fi
-log "aql: $("$AQL" -version)"
+log "boru: $("$BORU" -version)"
 echo
 
 cd "$REPO"
 fail=0
 
-# --- three modes, per suite ----------------------------------------------
-log "interpreter / check / --compile — each must pass with no error or divergence:"
-printf '  %-28s  %-12s  %-14s  %s\n' SUITE INTERPRETER CHECK BYTECODE
+# check_errors FILE -> prints the error count from `boru check` (or `?`).
+check_errors() {
+  local n
+  n="$("$BORU" check "$1" 2>&1 | grep -oE '[0-9]+ error\(s\)' | grep -oE '[0-9]+' | tail -1)"
+  echo "${n:-?}"
+}
+
+# --- modules: check only (a module has no top-level program to run) ------
+log "modules — boru check must report 0 errors:"
+printf '  %-28s  %s\n' MODULE CHECK
+for m in $MODULES; do
+  errs="$(check_errors "$m")"
+  if [ "$errs" = 0 ]; then c_col="ok"; else c_col="FAIL($errs err)"; fail=1; fi
+  printf '  %-28s  %s\n' "$m" "$c_col"
+done
+echo
+
+# --- suites: run (compiled) + check ---------------------------------------
+log "suites — boru X must exit 0 (and print \`all green\` where asserted); boru check X must report 0 errors:"
+printf '  %-28s  %-22s  %s\n' SUITE RUN CHECK
 for s in $SUITES; do
   name="$(basename "$s")"
 
-  # --no-compile, NOT a bare invocation: the default mode COMPILES when it can
-  # and falls back silently, so a bare `$AQL "$s"` here would compare bytecode
-  # against bytecode and this column would never see a divergence. That is not
-  # hypothetical — it is exactly how boru's function-value scope defect
-  # (design/FUNCTION-VALUE-SCOPE.0.md) stayed invisible to every gate in this
-  # ecosystem: the interpreter resolved a cross-module fn value's free words in
-  # the RUNNING module and the compiler in the DEFINING one, and no runner here
-  # could see it because no runner ever actually ran the interpreter.
-  interp="$("$AQL" --no-compile "$s" 2>&1)"; irc=$?
-  if [ $irc -eq 0 ]; then i_col="ok"; else i_col="FAIL"; fail=1; fi
+  out="$("$BORU" "$s" 2>&1)"; rc=$?
+  if [ $rc -ne 0 ]; then
+    if printf '%s\n' "$out" | grep -q 'compile_failed'; then r_col="COMPILE_FAILED"; else r_col="FAIL(exit $rc)"; fi
+    fail=1
+  elif ! printf '%s\n' $NO_ASSERT | grep -qx "$s" \
+       && [ "$(printf '%s\n' "$out" | grep -v '^check: ' | grep -v '^[[:space:]]*$' | tail -1)" != "all green" ]; then
+    r_col="FAIL(no all green)"; fail=1
+  else
+    r_col="ok"
+  fi
 
-  errs="$("$AQL" check "$s" 2>&1 | grep -oE '[0-9]+ error' | grep -oE '[0-9]+' | head -1)"
-  errs="${errs:-?}"
+  errs="$(check_errors "$s")"
   if [ "$errs" = 0 ]; then c_col="ok"; else c_col="FAIL($errs err)"; fail=1; fi
 
-  comp="$("$AQL" --compile "$s" 2>&1)"
-  if [ "$interp" = "$comp" ]; then b_col="ok"; else b_col="DIVERGE"; fail=1; fi
-
-  printf '  %-28s  %-12s  %-14s  %s\n' "$name" "$i_col" "$c_col" "$b_col"
-  if [ "$b_col" = DIVERGE ]; then
-    diff <(printf '%s\n' "$interp") <(printf '%s\n' "$comp") | sed 's/^/      /'
-  fi
-done
-
-# --- coverage: how much does --force-compile actually lower? --------------
-echo
-log "--force-compile coverage (refusals are expected gaps, not failures):"
-for s in $SUITES; do
-  out="$("$AQL" --force-compile "$s" 2>&1)"
-  if printf '%s\n' "$out" | grep -q 'force-compile:'; then
-    printf '  %-28s  refused  — %s\n' "$(basename "$s")" "$(printf '%s\n' "$out" | grep -o 'force-compile:.*' | head -1)"
-  else
-    printf '  %-28s  compiled\n' "$(basename "$s")"
+  printf '  %-28s  %-22s  %s\n' "$name" "$r_col" "$c_col"
+  if [ "$r_col" != ok ]; then
+    printf '%s\n' "$out" | grep -E 'error|FAIL|compile_failed' | head -5 | sed 's/^/      /'
   fi
 done
 
 echo
 if [ "$fail" = 0 ]; then
-  log "PASS — every suite runs clean under the interpreter, check, and the byte compiler."
+  log "PASS — every suite runs green compiled and every file checks with 0 errors."
 else
-  log "FAIL — a suite errored or the byte compiler diverged from the interpreter."
+  log "FAIL — a suite failed to compile/run, or a file has check errors."
 fi
 exit $fail
