@@ -56,8 +56,10 @@ needs `go` + network for the one-time build. Output:
 
 A `RUN` cell reads `COMPILE_FAILED` when boru refused to compile the suite
 (an upstream compiler defect), `FAIL(exit N)` for any other non-zero exit,
-and `FAIL(no all green)` when an assertion-bearing suite exited 0 without
-printing `all green`. The script exits non-zero on any of those or on any
+and `FAIL(no all green)` when an assertion-bearing suite exited 0 but its
+last output line is not `all green`. Every suite is assertion-bearing
+except those listed in `run.sh`'s `NO_ASSERT` (the smoke suite), so a suite
+that loses its tail assertion, or prints residue after `all green`, fails. The script exits non-zero on any of those or on any
 check **error** (warnings and infos are reported by `boru check` but do not
 gate).
 

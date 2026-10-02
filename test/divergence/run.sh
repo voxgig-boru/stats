@@ -4,7 +4,8 @@
 #
 #   run     boru X          compile to bytecode and run on the VM — the ONLY
 #                           execution path (see below); must exit 0, and an
-#                           assertion-bearing suite must print `all green`
+#                           assertion-bearing suite (all but NO_ASSERT) must
+#                           print `all green` as its last output line
 #   check   boru check X    static type-check; must report 0 errors
 #
 # Single-path model. Since boru main 2026-09-19 a program compiles to
@@ -42,6 +43,14 @@ test/stats_unit_test.aql
 test/stats_unit_spec.aql
 test/stats_prop_test.aql
 test/stats_prop_spec.aql
+test/stats_smoke_test.aql
+"
+
+# Suites that carry no assertions (pass = a clean exit). EVERY other suite is
+# assertion-bearing and must end by printing `all green` as its LAST output
+# line — so a suite that drops its tail assertion, or leaves residue after it
+# (e.g. an unbound Test.check-prop result), fails the gate.
+NO_ASSERT="
 test/stats_smoke_test.aql
 "
 
@@ -102,7 +111,8 @@ for s in $SUITES; do
   if [ $rc -ne 0 ]; then
     if printf '%s\n' "$out" | grep -q 'compile_failed'; then r_col="COMPILE_FAILED"; else r_col="FAIL(exit $rc)"; fi
     fail=1
-  elif grep -q '"all green"' "$s" && ! printf '%s\n' "$out" | grep -qx 'all green'; then
+  elif ! printf '%s\n' $NO_ASSERT | grep -qx "$s" \
+       && [ "$(printf '%s\n' "$out" | grep -v '^check: ' | grep -v '^[[:space:]]*$' | tail -1)" != "all green" ]; then
     r_col="FAIL(no all green)"; fail=1
   else
     r_col="ok"
