@@ -271,8 +271,9 @@ lowered)` (boru COMPILABLE-SUBSET §5, boru-lang/boru#528). **Rewrite:**
 each suite defines `def _int-list fn [[n:Integer r:Map] [List] [
 (r.list-of [r.int 0 100] n) ]]` and every generator is `[ (_int-list 8
 r) ]` (or `6`). Declines **11 → 0** (6 → 0 and 5 → 0); no site was left.
-The parens inside the fn are load-bearing: the two shorter spellings are
-known compiler divergences and both recur here — grouping the call inline
+The named fn and the parens inside it are both load-bearing: the two
+shorter spellings are known compiler divergences and both recur here —
+grouping the call inline
 (`[ (r.list-of [r.int 0 100] 8) ]`) compiles but the inner body loses `r`
 (the property reports `ok:false`, `undefined word: r`), and leaving it
 bare as the fn's result compiles but repeats the first draw (`[74 74 74
@@ -286,6 +287,35 @@ their own runs/seed/max-shrinks, plus three deliberately failing ones
 (failing and shrunk inputs), gave identical result maps. No run count,
 seed, max-shrinks, property or assertion changed; both suites' output is
 byte-identical before and after.
+
+An independent re-check used sub-seeds disjoint from those. Each iteration
+draws from sub-seed `seed + i`, so the seed-4 runs above re-cover seed 1's.
+The re-check covered 446 lists at those seeds: `check-prop` at seeds 501,
+−1000, 31337, 777777 and 123456789, and bodies taken from the `Test.prop`
+map at seeds 2001, −55555 and 4242424. It added 200 lists at the
+`run-property` defaults (seed 1). It also ran the eleven real properties
+at seeds 613, −4096 and 9000001. Finally it ran 36 failing properties
+(34 at fresh seeds, 2 at the `run-property` defaults) at shrink budgets
+of 13 to 200, comparing `failing-input`, `shrunk-input`, `shrunk-source`
+and `shrunk-cost`. Every output was byte-identical.
+
+**What the 0 does not cover.** `-compile-report` lists runtime stamp
+attempts only. The element body `[r.int 0 100]`, which `r.list-of` runs
+once per element, is never one. `r` is a run-time Map, so the call site
+cannot hand `rand-list-of` a compiled closure, and the native runs each
+element on a pooled interpreter sub-engine, before and after the rewrite.
+boru's interpreter-entry hook shows this. A Go probe over
+`RunCompiledReason` at seed 4, drawing 8-element lists, counts per list:
+
+- the old inline form: 1 `CallBoru` (the declined generator) and 9
+  `Engine.Run`;
+- `_int-list`: no `CallBoru` and 8 `Engine.Run`, one per drawn element (3
+  per list at length 3).
+
+So the rewrite moves the generator body onto the VM, but not the draws. A
+hand loop in the fn, `[ [for n [r.int 0 100]] ]`, draws the same values,
+but its generator declines again ("for: body nets multiple values per
+iteration"). On `64c5ab2`, `_int-list` is the best available spelling.
 
 ### Status of the original findings on main
 
