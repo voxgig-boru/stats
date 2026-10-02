@@ -19,7 +19,7 @@
 # the irrational results are tolerance-checked in the imperative sibling.
 #
 # Run:
-#   aql test/stats_unit_spec.aql
+#   boru test/stats_unit_spec.aql
 
 
 # The library under test is imported FIRST, before `boru:test`: works

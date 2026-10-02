@@ -704,9 +704,16 @@ def solve-linear fn [
         if ((r gte col) and ((MathUtil.abs ((rows get (r)) get (col))) gt (MathUtil.abs ((rows get (best)) get (col))))) [r] [best]
       ]] fold)
       def pv (MathUtil.abs ((rows get (piv)) get (col)))
+      # The message def is named `singular-msg`, not `msg` like every other
+      # raise site: works around a boru runtime defect — a `def msg` in an
+      # `if` arm inside this `each` body, once run, left a later first call
+      # of `covariance`/`correlation`/`zscores`/`cov-matrix`/`cor-matrix`
+      # unable to read its own fn-local defs from a fold/each body
+      # (`undefined word: fx` / `mat`, or `x` misread) — remove when fixed
+      # upstream; see dx-report.md D6.
       if (pv gt 0.000000001) [] [
-        def msg `Stats.ols: system is singular (zero pivot at column ${col})`
-        raise singular msg
+        def singular-msg `Stats.ols: system is singular (zero pivot at column ${col})`
+        raise singular singular-msg
       ]
       # swap pivot row into place (rows and rhs)
       def tmp-row (rows get (col))
@@ -795,6 +802,16 @@ def stat-decode fn [
       def msg `Stats.decode: payload is not parseable jsonic`
       raise bad_payload msg
     ])
+    # Reject a non-Map payload (e.g. `"42"` parses to an Integer) before the
+    # field reads. The `do […] error […]` below used to catch that too, but
+    # on boru main the `!.` dispatch failure on a non-Map value parsed
+    # inside a fn escapes the handler (and the caller's) as an untrappable
+    # `signature_error` — works around that boru runtime defect (dx-report.md
+    # D7); remove when fixed upstream.
+    if (payload is Map) [] [
+      def msg `Stats.decode: payload is not a Stats.encode snapshot (need integer n, floats mean m2 m3 m4 min max)`
+      raise bad_payload msg
+    ]
     do [
       # With the StructUtil.parse float-fidelity fix, whole-valued Float
       # moments round-trip as Float (e.g. `8.0`, not `8`), so the moments

@@ -16,7 +16,7 @@
 # return a Boolean.
 #
 # Run:
-#   aql test/stats_prop_spec.aql
+#   boru test/stats_prop_spec.aql
 
 
 # The library under test is imported FIRST, before `boru:test`: works

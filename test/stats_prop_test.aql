@@ -14,7 +14,7 @@
 # value on the stack. PROP-BODY takes that value and returns a Boolean.
 #
 # Run:
-#   aql test/stats_prop_test.aql
+#   boru test/stats_prop_test.aql
 
 
 # The library under test is imported FIRST, before `boru:test`: works

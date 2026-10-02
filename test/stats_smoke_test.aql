@@ -7,7 +7,7 @@
 # (value) print` pairs print in the wrong order.
 #
 # Run:
-#   aql test/stats_smoke_test.aql
+#   boru test/stats_smoke_test.aql
 
 import "boru:matrix-util" end
 import "../stats.aql" end
