@@ -50,7 +50,8 @@ info each, below). `test/divergence/run.sh` enforces exactly that.
 | 9 | Map/record printing is insertion-ordered | doc outputs of `Stats.encode` / `linreg` showed sorted keys | docs updated to the real output (`{n:5 mean:3.0 m2:…}`) |
 | 10 | Float last-ulp: `Stats.correlation [1 2 3 4 5] [2 4 5 4 5]` is `0.7745966692414833` (was `…834`) | doc comments only (tests are tolerance-checked) | docs updated |
 
-No test case, expected value or tolerance was changed. (`Assert.equal x y
+No test case, expected value or tolerance was changed or removed. The
+verification pass only *added* cases, for D6 and D7 below. (`Assert.equal x y
 <=> y x Assert.equal`, and its documented stack order is *actual first,
 expected second*. The suite summaries' forward `Assert.equal 0
 (Test.fail-count)` therefore labels correctly — `expected 0, got N`. The
@@ -169,6 +170,80 @@ fail anyway (with `needs_data`), so no valid code is blocked; inside
 `do […]` the check downgrades it to info and the run raises `needs_data`
 as documented. Unrecorded. No workaround applied (the guard is correct);
 the docs note the misleading message.
+
+**D6 🔴 runtime answer bug — a `def` in a nested `if` arm breaks a later
+first call (found by the post-migration verification).** None of the
+suites saw this, because each first calls the affected words *before*
+`Stats.ols`. A caller who runs `Stats.ols` first got, on the first later
+call of `covariance` / `correlation` (`undefined word: fx`), `cov-matrix`
+/ `cor-matrix` (`undefined word: mat`) or `zscores` (`cannot call sub` —
+its `x` misread). Once a word had been called, it kept working. The
+trigger was `solve-linear`'s `def msg` in an `if` arm (never taken) inside
+its elimination `each` body. A three-fn module reproduces it, but only
+across an `import`; the same code in one file is fine:
+
+```boru
+# lib.boru
+def a fn [[xs:List] [List] [
+  xs each [var [[c]
+    if (c lt 100) [] [
+      def msg `big`
+    ]
+    0
+  ]]
+]]
+def c fn [[xs:List] [Float] [
+  def fx xs
+  0.0 xs [var [[i acc] acc add (fx get 0)]] fold
+]]
+def b fn [[xs:List] [Float] [
+  if ((xs size) gte 1) [] [
+    def msg `empty`
+    raise bad_input msg
+  ]
+  c xs
+]]
+export "M" {a: a/v, b: b/v}
+
+# main.boru
+import "./lib.boru"
+print (M.a [1 2])       # [0, 0]
+print (M.b [1.0 2.0])   # expected 2.0; actual: fold: step 0: undefined word: fx
+```
+
+Renaming either `msg`, calling `M.b` before `M.a`, or raising without the
+`def` all make it go away. It looks like the same family as D1 (a
+fn-local `def` in a nested body leaking into a later fn's name
+resolution). Unrecorded. **Workaround:** `solve-linear`'s message def is
+named `singular-msg` (commented in place). `stats_unit_test` now opens with
+a `words-first-used-after-ols` block that first-calls the five words after
+`Stats.ols`. Without the workaround it fails, and so do the `bivariate`,
+`distributions` and `dataset` blocks after it.
+
+**D7 🔴 runtime defect — a `!.` dispatch failure escapes `do … error`.**
+Inside a fn, `!.` on a non-Map value produced by a native call is not
+trapped by the surrounding `do […] error […]`, nor by the caller's. The VM
+raises an untrappable error instead of the canonical `signature_error`:
+`cannot call dotr` at top level, and `[boru/internal_error]: bytecode:
+internal: CALL_NATIVE_POLY no match for dotr` under `Test.test`. At top
+level the same read *is* trapped, and `get "n"` is trapped too:
+
+```boru
+import "boru:struct-util"
+def f fn [[text:String] [Any] [
+  def payload (StructUtil.parse text)
+  do [ (payload !. n) ] error [ 0 ]
+]]
+print (f "42")   # expected 0; actual: error: [boru/signature_error]: cannot call `dotr`
+```
+
+In this library, `Stats.decode "42"` (or `"nope"`: any jsonic that parses
+to a non-Map) escaped as that error instead of the documented
+`bad_payload`. Unrecorded. **Workaround:** `stat-decode` checks
+`payload is Map` before the field reads and raises `bad_payload` with the
+existing "not a Stats.encode snapshot" message, which is the error the
+old handler produced. `stats_unit_test`'s `error-codes` block now covers
+`"42"` and `"nope"`.
 
 **Info-level check notes (not gating).** `boru check stats.aql` reports
 one `redundant_guard` info in `as-summary` ("guard is always true: x is
