@@ -31,6 +31,19 @@ import "boru:math-util" end
 import "boru:array-util" end
 
 
+# --- generator -------------------------------------------------------
+#
+# Every generator draws through `_int-list`, a named fn whose body GROUPS
+# the nested member call: `(r.list-of [r.int 0 100] n)`. Written inline,
+# `r.list-of [r.int 0 100] 8` declines its compile stamp and runs on the
+# interpreter (boru COMPILABLE-SUBSET §5, boru-lang/boru#528); grouping it
+# inline compiles but loses `r` in the inner body, and leaving it bare as
+# this fn's result compiles but repeats the first draw — so keep the
+# parens. Same seeded values either way (verified seed by seed).
+
+def _int-list fn [[n:Integer r:Map] [List] [ (r.list-of [r.int 0 100] n) ]]
+
+
 # --- reporting helper ----------------------------------------------
 
 def report fn [
@@ -51,7 +64,7 @@ def specs [
 
   # 1. The mean lies within [min, max].
   (Test.prop "mean-within-range"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs]
         def mu (Stats.mean xs end)
         ((Stats.min xs end) lte mu) and (mu lte (Stats.max xs end))
@@ -59,12 +72,12 @@ def specs [
 
   # 2. Population variance is non-negative.
   (Test.prop "pvariance-non-negative"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs] (Stats.pvariance xs end) gte 0.0 ]])
 
   # 3. The median lies within [min, max].
   (Test.prop "median-within-range"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs]
         def md (Stats.median xs end)
         ((Stats.min xs end) lte md) and (md lte (Stats.max xs end))
@@ -72,7 +85,7 @@ def specs [
 
   # 4. range == max - min, and is non-negative.
   (Test.prop "range-is-max-minus-min"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs]
         def rg (Stats.range xs end)
         (rg gte 0.0) and (rg eq ((Stats.max xs end) sub (Stats.min xs end)))
@@ -80,7 +93,7 @@ def specs [
 
   # 5. The mode is a member of the data.
   (Test.prop "mode-is-a-member"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs]
         def md (Stats.mode xs end)
         def fs (xs each [var [[x] (convert Float x)]])
@@ -89,7 +102,7 @@ def specs [
 
   # 6. count equals the input length.
   (Test.prop "count-equals-length"
-    [ r.list-of [r.int 0 100] 8 ]
+    [ (_int-list 8 r) ]
     [ var [[xs] (Stats.count xs end) eq (xs size) ]])
 
 ]

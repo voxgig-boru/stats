@@ -259,6 +259,34 @@ already List") — imprecise, since the parameter is `(List tor Summary)`;
 the guard is kept. Each suite additionally reports the standard
 `module_body_executed_in_check` info for the import.
 
+### Property-test generators now compile too (2026-10-02)
+
+Every suite compiled as a program, but the property suites' **generator
+bodies** — runtime callbacks handed to `Test.check-prop` / `Test.prop` —
+declined their compile stamp and ran on the interpreter: `boru
+-compile-report` listed 11 sites (6 in `stats_prop_spec`, 5 in
+`stats_prop_test`), all `r.list-of [r.int 0 100] n` and all `closure
+storedfn$body: unapplied fn-value in body residual (dynamic apply not
+lowered)` (boru COMPILABLE-SUBSET §5, boru-lang/boru#528). **Rewrite:**
+each suite defines `def _int-list fn [[n:Integer r:Map] [List] [
+(r.list-of [r.int 0 100] n) ]]` and every generator is `[ (_int-list 8
+r) ]` (or `6`). Declines **11 → 0** (6 → 0 and 5 → 0); no site was left.
+The parens inside the fn are load-bearing: the two shorter spellings are
+known compiler divergences and both recur here — grouping the call inline
+(`[ (r.list-of [r.int 0 100] 8) ]`) compiles but the inner body loses `r`
+(the property reports `ok:false`, `undefined word: r`), and leaving it
+bare as the fn's result compiles but repeats the first draw (`[74 74 74
+…]` where the interpreter draws `[74 87 38 …]`) — which every property
+here would still pass, silently. Semantics were proved outside the repo:
+old (interpreted) and new (compiled) generators printed every generated
+list through `Test.check-prop` at seeds 1 (100 runs), 4, 250 and 99999
+(30 runs each), for both list sizes, plus through `Test.run-property` —
+480 lists, byte-identical — and the suites' eleven real properties at
+their own runs/seed/max-shrinks, plus three deliberately failing ones
+(failing and shrunk inputs), gave identical result maps. No run count,
+seed, max-shrinks, property or assertion changed; both suites' output is
+byte-identical before and after.
+
 ### Status of the original findings on main
 
 | # | Original finding | On main @ `64c5ab2` |

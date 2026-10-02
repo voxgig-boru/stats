@@ -29,6 +29,19 @@ import "boru:math-util" end
 import "boru:array-util" end
 
 
+# --- generator -------------------------------------------------------
+#
+# Every generator draws through `_int-list`, a named fn whose body GROUPS
+# the nested member call: `(r.list-of [r.int 0 100] n)`. Written inline,
+# `r.list-of [r.int 0 100] 8` declines its compile stamp and runs on the
+# interpreter (boru COMPILABLE-SUBSET §5, boru-lang/boru#528); grouping it
+# inline compiles but loses `r` in the inner body, and leaving it bare as
+# this fn's result compiles but repeats the first draw — so keep the
+# parens. Same seeded values either way (verified seed by seed).
+
+def _int-list fn [[n:Integer r:Map] [List] [ (r.list-of [r.int 0 100] n) ]]
+
+
 # |a - b| < 1e-6.
 def close fn [
   [a:Float b:Float] [Boolean] [
@@ -43,7 +56,7 @@ def close fn [
 # constant data. Both are non-negative.
 
 Test.check-prop "sample-var-ge-pop-var"
-  [ r.list-of [r.int 0 100] 8 ]
+  [ (_int-list 8 r) ]
   [ var [[xs]
       def sv (Stats.variance xs end)
       def pv (Stats.pvariance xs end)
@@ -59,7 +72,7 @@ end drop   # check-prop returns its PropertyResult map; Test.results reads them 
 # concatenated data.
 
 Test.check-prop "merge-pools-correctly"
-  [ r.list-of [r.int 0 100] 6 ]
+  [ (_int-list 6 r) ]
   [ var [[xs]
       def ys [10 20 30 40]
       def a (Stats.summary xs end)
@@ -82,7 +95,7 @@ end drop   # check-prop returns its PropertyResult map; Test.results reads them 
 # correlation, so it is skipped — the property holds vacuously.)
 
 Test.check-prop "self-correlation-is-one"
-  [ r.list-of [r.int 0 100] 8 ]
+  [ (_int-list 8 r) ]
   [ var [[xs]
       def v (Stats.variance xs end)
       if (v gt 0.0) [
@@ -96,7 +109,7 @@ end drop   # check-prop returns its PropertyResult map; Test.results reads them 
 # --- P4. z-scores are centered at zero -----------------------------
 
 Test.check-prop "zscores-mean-zero"
-  [ r.list-of [r.int 0 100] 8 ]
+  [ (_int-list 8 r) ]
   [ var [[xs]
       def v (Stats.variance xs end)
       if (v gt 0.0) [
@@ -110,7 +123,7 @@ end drop   # check-prop returns its PropertyResult map; Test.results reads them 
 # --- P5. encode / decode preserves count and mean ------------------
 
 Test.check-prop "encode-decode-round-trips"
-  [ r.list-of [r.int 0 100] 8 ]
+  [ (_int-list 8 r) ]
   [ var [[xs]
       def s (Stats.summary xs end)
       def back (Stats.decode (Stats.encode s end) end)
