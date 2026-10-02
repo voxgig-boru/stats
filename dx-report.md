@@ -220,6 +220,14 @@ a `words-first-used-after-ols` block that first-calls the five words after
 `Stats.ols`. Without the workaround it fails, and so do the `bivariate`,
 `distributions` and `dataset` blocks after it.
 
+To look for other call-order effects, the verification ran a sweep. For
+each of 37 public call shapes plus 9 error-path calls (`do [...] error
+[...]` around a raising call), it ran a program that makes that call first
+and then calls every other public word, comparing each result with the
+word run alone. On the unfixed module the only first calls that broke
+later words were `ols` and the singular-`ols` error path (the five words
+above). With the workaround, nothing differs.
+
 **D7 🔴 runtime defect — a `!.` dispatch failure escapes `do … error`.**
 Inside a fn, `!.` on a non-Map value produced by a native call is not
 trapped by the surrounding `do […] error […]`, nor by the caller's. The VM
